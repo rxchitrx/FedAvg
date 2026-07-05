@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "FedAvg"
+version = "0.1.0"
+description = "A verbose federated learning demo for pneumonia classification using Flower and PyTorch."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "flwr>=1.8,<2.0",
+  "numpy>=1.26,<3.0",
+  "torch>=2.2,<3.0",
+]
+
+[tool.setuptools]
+py-modules = ["client", "server"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
