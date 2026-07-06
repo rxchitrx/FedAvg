@@ -10,7 +10,14 @@ import {
   YAxis,
 } from "recharts";
 
-const navItems = ["Experiments", "Live Run", "Clients", "Comparisons", "Artifacts", "Settings"];
+const navItems = [
+  { id: "experiments", label: "Experiments" },
+  { id: "live-run", label: "Live Run" },
+  { id: "clients", label: "Clients" },
+  { id: "comparisons", label: "Comparisons" },
+  { id: "artifacts", label: "Artifacts" },
+  { id: "settings", label: "Settings" },
+];
 
 const defaultConfig = {
   run_name: "dashboard_demo",
@@ -47,8 +54,17 @@ function toNumber(value) {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+function formatMetric(value, digits = 3) {
+  const number = toNumber(value);
+  return number === null ? "--" : number.toFixed(digits);
+}
+
 function badgeClass(state) {
   return `badge badge-${state || "idle"}`;
+}
+
+function getLatestByPhase(roundHistory, phase) {
+  return [...(roundHistory || [])].reverse().find((entry) => entry.phase === phase) || null;
 }
 
 function App() {
@@ -64,6 +80,7 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [selectedRun, setSelectedRun] = useState("");
+  const [activeSection, setActiveSection] = useState("experiments");
 
   const fetchDashboard = async () => {
     const response = await fetch("/api/dashboard");
@@ -101,21 +118,23 @@ function App() {
   const displayedRun = selectedRunData || dashboard.current_run || {};
 
   const chartData = useMemo(() => {
-    const run = displayedRun;
-    const fitRounds = run.fit_rounds || [];
-    const evalRounds = run.evaluation_rounds || [];
-    return fitRounds.map((row) => {
-      const matchingEval = evalRounds.find((entry) => entry.round === row.round) || {};
-      return {
-        round: Number(row.round),
-        val_accuracy: toNumber(row.val_accuracy),
-        val_recall: toNumber(row.val_recall),
-        val_f1_score: toNumber(row.val_f1_score),
-        eval_accuracy: toNumber(matchingEval.accuracy),
-        eval_recall: toNumber(matchingEval.recall),
-        eval_f1_score: toNumber(matchingEval.f1_score),
-      };
-    });
+    const fitRounds = displayedRun.fit_rounds || [];
+    const evalRounds = displayedRun.evaluation_rounds || [];
+    return fitRounds
+      .map((row) => {
+        const round = toNumber(row.round);
+        const matchingEval = evalRounds.find((entry) => toNumber(entry.round) === round) || {};
+        return {
+          round,
+          val_accuracy: toNumber(row.val_accuracy),
+          val_recall: toNumber(row.val_recall),
+          val_f1_score: toNumber(row.val_f1_score),
+          global_accuracy: toNumber(matchingEval.accuracy),
+          global_recall: toNumber(matchingEval.recall),
+          global_f1_score: toNumber(matchingEval.f1_score),
+        };
+      })
+      .filter((row) => row.round !== null);
   }, [displayedRun]);
 
   const liveTimeline = useMemo(() => {
@@ -128,10 +147,32 @@ function App() {
       { label: "Server boot", complete: server?.state === "running" || server?.state === "finished" },
       { label: "Clients connected", complete: clients.length >= 2 || displayedFitRounds.length > 0 },
       { label: "Training active", complete: clients.some((proc) => proc.state === "running") || displayedFitRounds.length > 0 },
-      { label: "Aggregation", complete: chartData.length > 0 },
+      { label: "Aggregation", complete: displayedFitRounds.length > 0 },
       { label: "Evaluation", complete: displayedEvaluationRounds.length > 0 },
     ];
-  }, [dashboard.processes, displayedRun, chartData]);
+  }, [dashboard.processes, displayedRun]);
+
+  const clientCards = useMemo(() => {
+    return (displayedRun.clients || []).map((client) => {
+      const roundHistory = client.round_metrics?.round_history || [];
+      return {
+        ...client,
+        latestFit: getLatestByPhase(roundHistory, "fit"),
+        latestEvaluate: getLatestByPhase(roundHistory, "evaluate"),
+      };
+    });
+  }, [displayedRun]);
+
+  const globalSummary = useMemo(() => {
+    const summary = displayedRun.server_summary || {};
+    return {
+      finalFit: summary.final_fit || null,
+      finalEvaluate: summary.final_evaluate || null,
+      metadata: summary.metadata || {},
+    };
+  }, [displayedRun]);
+
+  const processLogs = dashboard.processes || {};
 
   const startRun = async () => {
     setBusy(true);
@@ -148,6 +189,7 @@ function App() {
       }
       await fetchDashboard();
       setSelectedRun(config.run_name);
+      setActiveSection("live-run");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -182,8 +224,15 @@ function App() {
     });
   };
 
+  const jumpToSection = (sectionId) => {
+    setActiveSection(sectionId);
+    const element = document.getElementById(sectionId);
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
   const activeRunName = selectedRun || dashboard.current_run_name;
-  const clientCards = (displayedRun.clients || []).slice(0, 2);
 
   return (
     <div className="app-shell">
@@ -196,9 +245,13 @@ function App() {
           </div>
         </div>
         <nav className="sidebar-nav">
-          {navItems.map((item, index) => (
-            <button key={item} className={`nav-item ${index === 0 ? "active" : ""}`}>
-              {item}
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              className={`nav-item ${activeSection === item.id ? "active" : ""}`}
+              onClick={() => jumpToSection(item.id)}
+            >
+              {item.label}
             </button>
           ))}
         </nav>
@@ -241,7 +294,7 @@ function App() {
 
         {error ? <div className="error-banner">{error}</div> : null}
 
-        <section className="grid-two">
+        <section id="experiments" className="grid-two section-block">
           <div className="card config-card">
             <div className="section-head">
               <div>
@@ -353,7 +406,7 @@ function App() {
             </div>
           </div>
 
-          <div className="card timeline-card">
+          <div id="live-run" className="card timeline-card">
             <div className="section-head">
               <div>
                 <span className="eyebrow">Live progress</span>
@@ -369,7 +422,7 @@ function App() {
               ))}
             </div>
             <div className="process-list">
-              {Object.values(dashboard.processes || {}).map((process) => (
+              {Object.values(processLogs).map((process) => (
                 <div key={process.name} className="process-row">
                   <div>
                     <strong>{process.name}</strong>
@@ -382,12 +435,12 @@ function App() {
           </div>
         </section>
 
-        <section className="content-grid">
-          <div className="card chart-card">
+        <section className="content-grid section-block">
+          <div id="comparisons" className="card chart-card">
             <div className="section-head">
               <div>
                 <span className="eyebrow">Round metrics</span>
-                <h3>Validation and evaluation trends</h3>
+                <h3>Global model progression by round</h3>
               </div>
               <select value={selectedRun} onChange={(event) => setSelectedRun(event.target.value)}>
                 <option value="">Current run</option>
@@ -399,64 +452,136 @@ function App() {
               </select>
             </div>
             <div className="chart-wrap">
-              <ResponsiveContainer width="100%" height={320}>
-                <LineChart data={chartData}>
-                  <CartesianGrid stroke="#d9e3ea" strokeDasharray="4 4" />
-                  <XAxis dataKey="round" stroke="#5f7484" />
-                  <YAxis stroke="#5f7484" domain={[0, 1]} />
-                  <Tooltip />
-                  <Legend />
-                  <Line type="monotone" dataKey="eval_accuracy" stroke="#1b5e74" strokeWidth={3} dot={false} name="Eval accuracy" />
-                  <Line type="monotone" dataKey="eval_recall" stroke="#0d9488" strokeWidth={3} dot={false} name="Eval recall" />
-                  <Line type="monotone" dataKey="eval_f1_score" stroke="#d97706" strokeWidth={3} dot={false} name="Eval F1" />
-                </LineChart>
-              </ResponsiveContainer>
+              {chartData.length ? (
+                <ResponsiveContainer width="100%" height={320}>
+                  <LineChart data={chartData}>
+                    <CartesianGrid stroke="#d9e3ea" strokeDasharray="4 4" />
+                    <XAxis dataKey="round" stroke="#5f7484" />
+                    <YAxis stroke="#5f7484" domain={[0, 1]} />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="global_accuracy" stroke="#1b5e74" strokeWidth={3} name="Global accuracy" />
+                    <Line type="monotone" dataKey="global_recall" stroke="#0d9488" strokeWidth={3} name="Global recall" />
+                    <Line type="monotone" dataKey="global_f1_score" stroke="#d97706" strokeWidth={3} name="Global F1" />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="empty-state">No round data yet for the selected run.</div>
+              )}
             </div>
           </div>
 
-          <div className="clients-column">
-            {clientCards.map((client) => {
-              const latest = client.latest_epoch || {};
-              const metadata = client.summary?.metadata || {};
-              return (
-                <div key={client.name} className="card client-card">
-                  <div className="section-head">
-                    <div>
-                      <span className="eyebrow">Client status</span>
-                      <h3>{client.name}</h3>
-                    </div>
-                    <span className={badgeClass(metadata.client_behavior)}>{metadata.client_behavior || "unknown"}</span>
-                  </div>
-                  <div className="metric-pair-grid">
-                    <div>
-                      <span>Train acc</span>
-                      <strong>{latest.train_accuracy ? Number(latest.train_accuracy).toFixed(3) : "--"}</strong>
-                    </div>
-                    <div>
-                      <span>Val acc</span>
-                      <strong>{latest.val_accuracy ? Number(latest.val_accuracy).toFixed(3) : "--"}</strong>
-                    </div>
-                    <div>
-                      <span>Train recall</span>
-                      <strong>{latest.train_recall ? Number(latest.train_recall).toFixed(3) : "--"}</strong>
-                    </div>
-                    <div>
-                      <span>Val F1</span>
-                      <strong>{latest.val_f1_score ? Number(latest.val_f1_score).toFixed(3) : "--"}</strong>
-                    </div>
-                  </div>
-                  <div className="confusion-note">
-                    <span>Attack mode</span>
-                    <strong>{metadata.attack_mode || "none"}</strong>
-                  </div>
-                </div>
-              );
-            })}
+          <div id="artifacts" className="card summary-card">
+            <div className="section-head">
+              <div>
+                <span className="eyebrow">Global model</span>
+                <h3>Final aggregated outcome</h3>
+              </div>
+            </div>
+            <div className="metric-pair-grid">
+              <div>
+                <span>Strategy</span>
+                <strong>{globalSummary.metadata.aggregation_strategy || "--"}</strong>
+              </div>
+              <div>
+                <span>Rounds</span>
+                <strong>{globalSummary.metadata.num_rounds || "--"}</strong>
+              </div>
+              <div>
+                <span>Final global accuracy</span>
+                <strong>{formatMetric(globalSummary.finalEvaluate?.accuracy)}</strong>
+              </div>
+              <div>
+                <span>Final global recall</span>
+                <strong>{formatMetric(globalSummary.finalEvaluate?.recall)}</strong>
+              </div>
+              <div>
+                <span>Final global F1</span>
+                <strong>{formatMetric(globalSummary.finalEvaluate?.f1_score)}</strong>
+              </div>
+              <div>
+                <span>Global loss</span>
+                <strong>{formatMetric(globalSummary.finalEvaluate?.loss)}</strong>
+              </div>
+            </div>
+            <div className="global-summary-note">
+              <p>
+                Local fit metrics are the hospitals&apos; scores before aggregation. Global metrics are the server-aggregated
+                model after both clients send updates back.
+              </p>
+            </div>
           </div>
         </section>
 
-        <section className="grid-two">
-          <div className="card comparison-card">
+        <section id="clients" className="clients-board section-block">
+          {clientCards.length ? (
+            clientCards.map((client) => (
+              <div key={client.name} className="card client-detail-card">
+                <div className="section-head">
+                  <div>
+                    <span className="eyebrow">Hospital view</span>
+                    <h3>{client.name}</h3>
+                  </div>
+                  <span className={badgeClass(client.summary?.metadata?.client_behavior)}>
+                    {client.summary?.metadata?.client_behavior || "unknown"}
+                  </span>
+                </div>
+
+                <div className="client-comparison-grid">
+                  <div className="metric-panel">
+                    <h4>Local model before aggregation</h4>
+                    <div className="mini-metrics">
+                      <div><span>Train acc</span><strong>{formatMetric(client.latestFit?.train_accuracy)}</strong></div>
+                      <div><span>Train recall</span><strong>{formatMetric(client.latestFit?.train_recall)}</strong></div>
+                      <div><span>Train F1</span><strong>{formatMetric(client.latestFit?.train_f1_score)}</strong></div>
+                      <div><span>Val acc</span><strong>{formatMetric(client.latestFit?.val_accuracy)}</strong></div>
+                      <div><span>Val recall</span><strong>{formatMetric(client.latestFit?.val_recall)}</strong></div>
+                      <div><span>Val F1</span><strong>{formatMetric(client.latestFit?.val_f1_score)}</strong></div>
+                    </div>
+                  </div>
+
+                  <div className="metric-panel">
+                    <h4>Global model after aggregation</h4>
+                    <div className="mini-metrics">
+                      <div><span>Test acc</span><strong>{formatMetric(client.latestEvaluate?.accuracy)}</strong></div>
+                      <div><span>Test recall</span><strong>{formatMetric(client.latestEvaluate?.recall)}</strong></div>
+                      <div><span>Test F1</span><strong>{formatMetric(client.latestEvaluate?.f1_score)}</strong></div>
+                      <div><span>Precision</span><strong>{formatMetric(client.latestEvaluate?.precision)}</strong></div>
+                      <div><span>Specificity</span><strong>{formatMetric(client.latestEvaluate?.specificity)}</strong></div>
+                      <div><span>Loss</span><strong>{formatMetric(client.latestEvaluate?.loss)}</strong></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="delta-strip">
+                  <div>
+                    <span>Accuracy delta</span>
+                    <strong>{formatMetric((toNumber(client.latestEvaluate?.accuracy) ?? 0) - (toNumber(client.latestFit?.val_accuracy) ?? 0))}</strong>
+                  </div>
+                  <div>
+                    <span>Recall delta</span>
+                    <strong>{formatMetric((toNumber(client.latestEvaluate?.recall) ?? 0) - (toNumber(client.latestFit?.val_recall) ?? 0))}</strong>
+                  </div>
+                  <div>
+                    <span>F1 delta</span>
+                    <strong>{formatMetric((toNumber(client.latestEvaluate?.f1_score) ?? 0) - (toNumber(client.latestFit?.val_f1_score) ?? 0))}</strong>
+                  </div>
+                  <div>
+                    <span>Confusion matrix</span>
+                    <strong>
+                      TP {Math.round(toNumber(client.latestEvaluate?.tp) ?? 0)} | TN {Math.round(toNumber(client.latestEvaluate?.tn) ?? 0)} | FP {Math.round(toNumber(client.latestEvaluate?.fp) ?? 0)} | FN {Math.round(toNumber(client.latestEvaluate?.fn) ?? 0)}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="card empty-card">No client metrics available yet for this run.</div>
+          )}
+        </section>
+
+        <section id="comparisons-table" className="grid-two section-block">
+          <div id="comparisons" className="card comparison-card">
             <div className="section-head">
               <div>
                 <span className="eyebrow">Run comparison</span>
@@ -485,9 +610,9 @@ function App() {
                     <tr key={row.run_name} className={isBest ? "best-row" : ""}>
                       <td>{row.run_name}</td>
                       <td>{row.aggregation_strategy}</td>
-                      <td>{row.final_eval_accuracy ? Number(row.final_eval_accuracy).toFixed(3) : "--"}</td>
-                      <td>{row.final_eval_recall ? Number(row.final_eval_recall).toFixed(3) : "--"}</td>
-                      <td>{row.final_eval_f1_score ? Number(row.final_eval_f1_score).toFixed(3) : "--"}</td>
+                      <td>{formatMetric(row.final_eval_accuracy)}</td>
+                      <td>{formatMetric(row.final_eval_recall)}</td>
+                      <td>{formatMetric(row.final_eval_f1_score)}</td>
                     </tr>
                   );
                 })}
@@ -495,7 +620,7 @@ function App() {
             </table>
           </div>
 
-          <div className="card logs-card">
+          <div id="live-logs" className="card logs-card">
             <div className="section-head">
               <div>
                 <span className="eyebrow">Process logs</span>
@@ -503,16 +628,47 @@ function App() {
               </div>
             </div>
             <div className="logs-grid">
-              {Object.values(dashboard.processes || {}).map((process) => (
-                <div key={process.name} className="log-column">
-                  <div className="log-column-head">
-                    <strong>{process.name}</strong>
-                    <span className={badgeClass(process.state)}>{process.state}</span>
+              {Object.values(processLogs).length ? (
+                Object.values(processLogs).map((process) => (
+                  <div key={process.name} className="log-column">
+                    <div className="log-column-head">
+                      <strong>{process.name}</strong>
+                      <span className={badgeClass(process.state)}>{process.state}</span>
+                    </div>
+                    <pre>{(process.recent_logs || []).slice(-12).join("\n") || "No logs yet."}</pre>
                   </div>
-                  <pre>{(process.recent_logs || []).slice(-12).join("\n") || "No logs yet."}</pre>
-                </div>
-              ))}
+                ))
+              ) : (
+                <div className="empty-state">No live process logs yet.</div>
+              )}
             </div>
+          </div>
+        </section>
+
+        <section id="settings" className="card settings-card section-block">
+          <div className="section-head">
+            <div>
+              <span className="eyebrow">Artifacts and settings</span>
+              <h3>Saved runs</h3>
+            </div>
+          </div>
+          <div className="saved-runs-grid">
+            {dashboard.available_runs.map((run) => (
+              <button
+                key={run.run_name}
+                className={`saved-run-card ${selectedRun === run.run_name ? "selected" : ""}`}
+                onClick={() => {
+                  setSelectedRun(run.run_name);
+                  setActiveSection("comparisons");
+                }}
+              >
+                <strong>{run.run_name}</strong>
+                <span>{run.aggregation_strategy}</span>
+                <span>Accuracy {formatMetric(run.final_accuracy)}</span>
+                <span>Recall {formatMetric(run.final_recall)}</span>
+                <span>F1 {formatMetric(run.final_f1_score)}</span>
+              </button>
+            ))}
           </div>
         </section>
       </main>

@@ -118,6 +118,10 @@ select {
   gap: 22px;
 }
 
+.section-block {
+  scroll-margin-top: 24px;
+}
+
 .card {
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(216, 226, 232, 0.9);
@@ -201,6 +205,11 @@ select {
 
 .content-grid {
   grid-template-columns: 1.45fr 0.8fr;
+}
+
+.clients-board {
+  display: grid;
+  gap: 22px;
 }
 
 .section-head {
@@ -338,9 +347,83 @@ select {
   height: 320px;
 }
 
+.empty-state,
+.empty-card {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  color: var(--muted);
+}
+
 .clients-column {
   display: grid;
   gap: 22px;
+}
+
+.summary-card,
+.settings-card {
+  padding: 22px;
+}
+
+.global-summary-note {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+.client-detail-card {
+  padding: 22px;
+}
+
+.client-comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.metric-panel {
+  border-radius: 18px;
+  background: var(--surface-soft);
+  padding: 16px;
+}
+
+.metric-panel h4 {
+  margin: 0 0 14px;
+}
+
+.mini-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mini-metrics div {
+  padding: 12px;
+  border-radius: 14px;
+  background: white;
+}
+
+.mini-metrics span,
+.delta-strip span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.84rem;
+  margin-bottom: 6px;
+}
+
+.delta-strip {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.delta-strip div {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(25, 94, 119, 0.08), rgba(15, 140, 134, 0.06));
 }
 
 .metric-pair-grid {
@@ -398,6 +481,28 @@ th {
   gap: 14px;
 }
 
+.saved-runs-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.saved-run-card {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: white;
+  padding: 16px;
+  text-align: left;
+  display: grid;
+  gap: 6px;
+}
+
+.saved-run-card.selected,
+.saved-run-card:hover {
+  border-color: rgba(25, 94, 119, 0.35);
+  background: rgba(25, 94, 119, 0.05);
+}
+
 .log-column {
   border-radius: 18px;
   background: #10222b;
@@ -447,7 +552,11 @@ th {
   .content-grid,
   .logs-grid,
   .form-grid,
-  .client-config-grid {
+  .client-config-grid,
+  .client-comparison-grid,
+  .saved-runs-grid,
+  .delta-strip,
+  .mini-metrics {
     grid-template-columns: 1fr;
   }
 }

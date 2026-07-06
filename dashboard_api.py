@@ -210,12 +210,14 @@ def collect_run_details(run_name: str) -> dict[str, Any]:
     if client_root.exists():
         for client_dir in sorted(path for path in client_root.iterdir() if path.is_dir()):
             summary = read_json(client_dir / "summary.json")
+            round_metrics = read_json(client_dir / "round_metrics.json")
             epoch_rows = parse_csv(client_dir / "epoch_metrics.csv")
             latest_epoch = epoch_rows[-1] if epoch_rows else {}
             client_summaries.append(
                 {
                     "name": client_dir.name,
                     "summary": summary,
+                    "round_metrics": round_metrics,
                     "latest_epoch": latest_epoch,
                 }
             )
