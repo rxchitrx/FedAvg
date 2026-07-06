@@ -15,11 +15,25 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
-LOGGER = logging.getLogger("fedavg-client")
+def configure_logging(logger_name: str) -> logging.Logger:
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.WARNING)
+
+    logging.getLogger("flwr").setLevel(logging.WARNING)
+
+    logger = logging.getLogger(logger_name)
+    logger.handlers.clear()
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    logger.addHandler(handler)
+    return logger
+
+
+LOGGER = configure_logging("fedavg-client")
 
 
 HOSPITAL_NAME = os.getenv("HOSPITAL_NAME", "Hospital_A")

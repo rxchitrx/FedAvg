@@ -18,11 +18,25 @@ from flwr.common import (
 )
 
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
-LOGGER = logging.getLogger("fedavg-server")
+def configure_logging(logger_name: str) -> logging.Logger:
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.WARNING)
+
+    logging.getLogger("flwr").setLevel(logging.WARNING)
+
+    logger = logging.getLogger(logger_name)
+    logger.handlers.clear()
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    logger.addHandler(handler)
+    return logger
+
+
+LOGGER = configure_logging("fedavg-server")
 
 
 SERVER_ADDRESS = os.getenv("SERVER_ADDRESS", "127.0.0.1:8080")
@@ -75,6 +89,23 @@ def summarize_parameters(parameters: Parameters) -> str:
     ndarrays = parameters_to_ndarrays(parameters)
     total_scalars = sum(int(array.size) for array in ndarrays)
     return f"{len(ndarrays)} tensors | {total_scalars:,} scalar values"
+
+
+def format_metric_value(value: object) -> str:
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    return str(value)
+
+
+def format_metrics_summary(metrics: Dict[str, object], preferred_order: List[str] | None = None) -> str:
+    if not metrics:
+        return "no metrics"
+
+    keys = preferred_order or list(metrics.keys())
+    seen = set()
+    ordered_keys = [key for key in keys if key in metrics and not (key in seen or seen.add(key))]
+    ordered_keys.extend(key for key in metrics.keys() if key not in seen)
+    return " | ".join(f"{key}={format_metric_value(metrics[key])}" for key in ordered_keys)
 
 
 def fit_config(server_round: int) -> Dict[str, int]:
@@ -182,12 +213,28 @@ class VerboseFedAvg(fl.server.strategy.FedAvg):
             len(failures),
         )
         for client_proxy, fit_res in results:
+            metrics = dict(fit_res.metrics)
             LOGGER.info(
-                "[SERVER] Round %d | client %s update received: examples=%d metrics=%s",
+                "[SERVER] Round %d | client %s update received | examples=%d | %s",
                 server_round,
                 client_proxy.cid,
                 fit_res.num_examples,
-                dict(fit_res.metrics),
+                format_metrics_summary(
+                    metrics,
+                    preferred_order=[
+                        "train_loss",
+                        "train_accuracy",
+                        "train_precision",
+                        "train_recall",
+                        "train_f1_score",
+                        "val_loss",
+                        "val_accuracy",
+                        "val_precision",
+                        "val_recall",
+                        "val_f1_score",
+                        "client_behavior_poisoned",
+                    ],
+                ),
             )
 
         aggregated_parameters, aggregated_metrics = self._aggregate_parameters(server_round, results, failures)
@@ -197,10 +244,25 @@ class VerboseFedAvg(fl.server.strategy.FedAvg):
                 [(fit_res.num_examples, dict(fit_res.metrics)) for _, fit_res in results]
             )
             LOGGER.info(
-                "[SERVER] Round %d | %s aggregation complete with weighted client metrics: %s",
+                "[SERVER] Round %d | %s aggregation complete | %s",
                 server_round,
                 AGGREGATION_STRATEGY.upper(),
-                weighted_metrics,
+                format_metrics_summary(
+                    weighted_metrics,
+                    preferred_order=[
+                        "train_loss",
+                        "train_accuracy",
+                        "train_precision",
+                        "train_recall",
+                        "train_f1_score",
+                        "val_loss",
+                        "val_accuracy",
+                        "val_precision",
+                        "val_recall",
+                        "val_f1_score",
+                        "client_behavior_poisoned",
+                    ],
+                ),
             )
             SERVER_ARTIFACT_LOGGER.record_fit_round(server_round, weighted_metrics, len(results))
 
@@ -233,22 +295,29 @@ class VerboseFedAvg(fl.server.strategy.FedAvg):
             len(failures),
         )
         for client_proxy, evaluate_res in results:
+            metrics = dict(evaluate_res.metrics)
             LOGGER.info(
-                "[SERVER] Round %d | client %s evaluation received: loss=%.4f examples=%d metrics=%s",
+                "[SERVER] Round %d | client %s evaluation received | loss=%.4f | examples=%d | %s",
                 server_round,
                 client_proxy.cid,
                 evaluate_res.loss,
                 evaluate_res.num_examples,
-                dict(evaluate_res.metrics),
+                format_metrics_summary(
+                    metrics,
+                    preferred_order=["accuracy", "precision", "recall", "specificity", "f1_score"],
+                ),
             )
 
         aggregated_loss, aggregated_metrics = super().aggregate_evaluate(server_round, results, failures)
         if aggregated_loss is not None:
             LOGGER.info(
-                "[SERVER] Round %d | aggregated federated evaluation: loss=%.4f metrics=%s",
+                "[SERVER] Round %d | aggregated federated evaluation | loss=%.4f | %s",
                 server_round,
                 aggregated_loss,
-                aggregated_metrics,
+                format_metrics_summary(
+                    aggregated_metrics or {},
+                    preferred_order=["accuracy", "precision", "recall", "specificity", "f1_score"],
+                ),
             )
             SERVER_ARTIFACT_LOGGER.record_eval_round(
                 server_round,
