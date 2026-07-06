@@ -2,6 +2,7 @@ import csv
 import json
 import os
 import signal
+import shutil
 import subprocess
 import sys
 import threading
@@ -155,6 +156,10 @@ class RunController:
             raise HTTPException(status_code=400, detail="A run is already active. Stop it before starting another.")
 
         self.current_run_name = config.run_name
+        run_dir = ARTIFACT_ROOT / config.run_name
+        if run_dir.exists():
+            shutil.rmtree(run_dir)
+
         common_env = os.environ.copy()
         common_env.update(
             {

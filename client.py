@@ -366,6 +366,8 @@ class PneumoniaClient(fl.client.NumPyClient):
         )
         updated_parameters = self.get_parameters(config={})
         outbound_parameters = apply_attack(updated_parameters)
+        criterion = nn.CrossEntropyLoss()
+        local_test_metrics = evaluate_loader(self.model, self.test_loader, criterion)
 
         LOGGER.info(
             "[%s] Round %d | local training finished, transmitting updated parameters back to server",
@@ -396,6 +398,12 @@ class PneumoniaClient(fl.client.NumPyClient):
             "val_recall": final_epoch_metrics["val_recall"],
             "val_specificity": final_epoch_metrics["val_specificity"],
             "val_f1_score": final_epoch_metrics["val_f1_score"],
+            "local_test_loss": local_test_metrics["loss"],
+            "local_test_accuracy": local_test_metrics["accuracy"],
+            "local_test_precision": local_test_metrics["precision"],
+            "local_test_recall": local_test_metrics["recall"],
+            "local_test_specificity": local_test_metrics["specificity"],
+            "local_test_f1_score": local_test_metrics["f1_score"],
             "client_behavior_poisoned": 1.0 if CLIENT_BEHAVIOR == "poisoned" else 0.0,
         }
         self.artifact_logger.record_round_fit(round_number, fit_metrics)

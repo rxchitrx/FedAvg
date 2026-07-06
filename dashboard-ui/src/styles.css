@@ -220,6 +220,13 @@ select {
   margin-bottom: 18px;
 }
 
+.chart-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -256,6 +263,46 @@ select {
   background: var(--surface-soft);
   display: grid;
   gap: 12px;
+}
+
+.behavior-group {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.segmented-control {
+  display: inline-grid;
+  grid-auto-flow: column;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 16px;
+  background: rgba(216, 226, 232, 0.65);
+}
+
+.segmented-control.compact {
+  padding: 4px;
+}
+
+.segment {
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  padding: 10px 14px;
+  font-weight: 700;
+}
+
+.segment.active {
+  background: white;
+  color: var(--ink);
+  box-shadow: 0 6px 14px rgba(17, 56, 76, 0.08);
+}
+
+.segment.danger.active {
+  background: rgba(201, 74, 56, 0.14);
+  color: #9f2f22;
 }
 
 .client-config-head {
@@ -345,6 +392,13 @@ select {
 
 .chart-wrap {
   height: 320px;
+}
+
+.chart-caption {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
 }
 
 .empty-state,

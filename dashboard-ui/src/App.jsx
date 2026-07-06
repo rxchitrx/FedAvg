@@ -4,6 +4,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -81,6 +82,7 @@ function App() {
   const [error, setError] = useState("");
   const [selectedRun, setSelectedRun] = useState("");
   const [activeSection, setActiveSection] = useState("experiments");
+  const [chartMetric, setChartMetric] = useState("accuracy");
 
   const fetchDashboard = async () => {
     const response = await fetch("/api/dashboard");
@@ -120,22 +122,58 @@ function App() {
   const chartData = useMemo(() => {
     const fitRounds = displayedRun.fit_rounds || [];
     const evalRounds = displayedRun.evaluation_rounds || [];
-    return fitRounds
-      .map((row) => {
-        const round = toNumber(row.round);
-        const matchingEval = evalRounds.find((entry) => toNumber(entry.round) === round) || {};
+    const latestFitByRound = new Map();
+    const latestEvalByRound = new Map();
+
+    fitRounds.forEach((row) => {
+      const round = toNumber(row.round);
+      if (round !== null) latestFitByRound.set(round, row);
+    });
+    evalRounds.forEach((row) => {
+      const round = toNumber(row.round);
+      if (round !== null) latestEvalByRound.set(round, row);
+    });
+
+    return Array.from(latestFitByRound.keys())
+      .sort((a, b) => a - b)
+      .map((round) => {
+        const fitRow = latestFitByRound.get(round) || {};
+        const evalRow = latestEvalByRound.get(round) || {};
         return {
           round,
-          val_accuracy: toNumber(row.val_accuracy),
-          val_recall: toNumber(row.val_recall),
-          val_f1_score: toNumber(row.val_f1_score),
-          global_accuracy: toNumber(matchingEval.accuracy),
-          global_recall: toNumber(matchingEval.recall),
-          global_f1_score: toNumber(matchingEval.f1_score),
+          local_accuracy: toNumber(fitRow.local_test_accuracy ?? fitRow.val_accuracy),
+          local_recall: toNumber(fitRow.local_test_recall ?? fitRow.val_recall),
+          local_f1_score: toNumber(fitRow.local_test_f1_score ?? fitRow.val_f1_score),
+          global_accuracy: toNumber(evalRow.accuracy),
+          global_recall: toNumber(evalRow.recall),
+          global_f1_score: toNumber(evalRow.f1_score),
         };
-      })
-      .filter((row) => row.round !== null);
+      });
   }, [displayedRun]);
+
+  const chartConfig = {
+    accuracy: {
+      title: "Accuracy by round",
+      localKey: "local_accuracy",
+      globalKey: "global_accuracy",
+      localLabel: "Local test accuracy",
+      globalLabel: "Global test accuracy",
+    },
+    recall: {
+      title: "Recall by round",
+      localKey: "local_recall",
+      globalKey: "global_recall",
+      localLabel: "Local test recall",
+      globalLabel: "Global test recall",
+    },
+    f1_score: {
+      title: "F1 by round",
+      localKey: "local_f1_score",
+      globalKey: "global_f1_score",
+      localLabel: "Local test F1",
+      globalLabel: "Global test F1",
+    },
+  };
 
   const liveTimeline = useMemo(() => {
     const processes = dashboard.processes || {};
@@ -377,16 +415,32 @@ function App() {
                       Enabled
                     </label>
                   </div>
-                  <label>
-                    Behavior
-                    <select value={client.behavior} onChange={(event) => updateClient(index, "behavior", event.target.value)}>
-                      <option value="honest">Honest</option>
-                      <option value="poisoned">Poisoned</option>
-                    </select>
-                  </label>
+                  <div className="behavior-group">
+                    <span>Behavior</span>
+                    <div className="segmented-control">
+                      <button
+                        type="button"
+                        className={client.behavior === "honest" ? "segment active" : "segment"}
+                        onClick={() => updateClient(index, "behavior", "honest")}
+                      >
+                        Honest
+                      </button>
+                      <button
+                        type="button"
+                        className={client.behavior === "poisoned" ? "segment danger active" : "segment danger"}
+                        onClick={() => updateClient(index, "behavior", "poisoned")}
+                      >
+                        Poisoned
+                      </button>
+                    </div>
+                  </div>
                   <label>
                     Attack mode
-                    <select value={client.attack_mode} onChange={(event) => updateClient(index, "attack_mode", event.target.value)}>
+                    <select
+                      value={client.attack_mode}
+                      disabled={client.behavior !== "poisoned"}
+                      onChange={(event) => updateClient(index, "attack_mode", event.target.value)}
+                    >
                       <option value="sign_flip">Sign flip</option>
                       <option value="gaussian_noise">Gaussian noise</option>
                       <option value="zero_out">Zero out</option>
@@ -397,6 +451,7 @@ function App() {
                     <input
                       type="number"
                       step="0.5"
+                      disabled={client.behavior !== "poisoned"}
                       value={client.attack_strength}
                       onChange={(event) => updateClient(index, "attack_strength", Number(event.target.value))}
                     />
@@ -440,34 +495,78 @@ function App() {
             <div className="section-head">
               <div>
                 <span className="eyebrow">Round metrics</span>
-                <h3>Global model progression by round</h3>
+                <h3>{chartConfig[chartMetric].title}</h3>
               </div>
-              <select value={selectedRun} onChange={(event) => setSelectedRun(event.target.value)}>
-                <option value="">Current run</option>
-                {dashboard.available_runs.map((run) => (
-                  <option key={run.run_name} value={run.run_name}>
-                    {run.run_name}
-                  </option>
-                ))}
-              </select>
+              <div className="chart-toolbar">
+                <div className="segmented-control compact">
+                  <button
+                    type="button"
+                    className={chartMetric === "accuracy" ? "segment active" : "segment"}
+                    onClick={() => setChartMetric("accuracy")}
+                  >
+                    Accuracy
+                  </button>
+                  <button
+                    type="button"
+                    className={chartMetric === "recall" ? "segment active" : "segment"}
+                    onClick={() => setChartMetric("recall")}
+                  >
+                    Recall
+                  </button>
+                  <button
+                    type="button"
+                    className={chartMetric === "f1_score" ? "segment active" : "segment"}
+                    onClick={() => setChartMetric("f1_score")}
+                  >
+                    F1
+                  </button>
+                </div>
+                <select value={selectedRun} onChange={(event) => setSelectedRun(event.target.value)}>
+                  <option value="">Current run</option>
+                  {dashboard.available_runs.map((run) => (
+                    <option key={run.run_name} value={run.run_name}>
+                      {run.run_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="chart-wrap">
               {chartData.length ? (
                 <ResponsiveContainer width="100%" height={320}>
                   <LineChart data={chartData}>
                     <CartesianGrid stroke="#d9e3ea" strokeDasharray="4 4" />
-                    <XAxis dataKey="round" stroke="#5f7484" />
+                    <XAxis dataKey="round" stroke="#5f7484" allowDecimals={false} />
                     <YAxis stroke="#5f7484" domain={[0, 1]} />
                     <Tooltip />
                     <Legend />
-                    <Line type="monotone" dataKey="global_accuracy" stroke="#1b5e74" strokeWidth={3} name="Global accuracy" />
-                    <Line type="monotone" dataKey="global_recall" stroke="#0d9488" strokeWidth={3} name="Global recall" />
-                    <Line type="monotone" dataKey="global_f1_score" stroke="#d97706" strokeWidth={3} name="Global F1" />
+                    <ReferenceLine y={0.9} stroke="#d8e2e8" strokeDasharray="3 3" />
+                    <Line
+                      type="monotone"
+                      dataKey={chartConfig[chartMetric].localKey}
+                      stroke="#0d9488"
+                      strokeWidth={3}
+                      name={chartConfig[chartMetric].localLabel}
+                      dot={{ r: 4 }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey={chartConfig[chartMetric].globalKey}
+                      stroke="#1b5e74"
+                      strokeWidth={3}
+                      name={chartConfig[chartMetric].globalLabel}
+                      dot={{ r: 4 }}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
                 <div className="empty-state">No round data yet for the selected run.</div>
               )}
+            </div>
+            <div className="chart-caption">
+              The green line is the hospital-local validation score before aggregation. The blue line is the global model
+              score after both clients send updates and the server aggregates them. This chart now compares local test
+              versus global test on the same split.
             </div>
           </div>
 
@@ -534,9 +633,9 @@ function App() {
                       <div><span>Train acc</span><strong>{formatMetric(client.latestFit?.train_accuracy)}</strong></div>
                       <div><span>Train recall</span><strong>{formatMetric(client.latestFit?.train_recall)}</strong></div>
                       <div><span>Train F1</span><strong>{formatMetric(client.latestFit?.train_f1_score)}</strong></div>
-                      <div><span>Val acc</span><strong>{formatMetric(client.latestFit?.val_accuracy)}</strong></div>
-                      <div><span>Val recall</span><strong>{formatMetric(client.latestFit?.val_recall)}</strong></div>
-                      <div><span>Val F1</span><strong>{formatMetric(client.latestFit?.val_f1_score)}</strong></div>
+                      <div><span>Local test acc</span><strong>{formatMetric(client.latestFit?.local_test_accuracy ?? client.latestFit?.val_accuracy)}</strong></div>
+                      <div><span>Local test recall</span><strong>{formatMetric(client.latestFit?.local_test_recall ?? client.latestFit?.val_recall)}</strong></div>
+                      <div><span>Local test F1</span><strong>{formatMetric(client.latestFit?.local_test_f1_score ?? client.latestFit?.val_f1_score)}</strong></div>
                     </div>
                   </div>
 
@@ -556,15 +655,15 @@ function App() {
                 <div className="delta-strip">
                   <div>
                     <span>Accuracy delta</span>
-                    <strong>{formatMetric((toNumber(client.latestEvaluate?.accuracy) ?? 0) - (toNumber(client.latestFit?.val_accuracy) ?? 0))}</strong>
+                    <strong>{formatMetric((toNumber(client.latestEvaluate?.accuracy) ?? 0) - (toNumber(client.latestFit?.local_test_accuracy ?? client.latestFit?.val_accuracy) ?? 0))}</strong>
                   </div>
                   <div>
                     <span>Recall delta</span>
-                    <strong>{formatMetric((toNumber(client.latestEvaluate?.recall) ?? 0) - (toNumber(client.latestFit?.val_recall) ?? 0))}</strong>
+                    <strong>{formatMetric((toNumber(client.latestEvaluate?.recall) ?? 0) - (toNumber(client.latestFit?.local_test_recall ?? client.latestFit?.val_recall) ?? 0))}</strong>
                   </div>
                   <div>
                     <span>F1 delta</span>
-                    <strong>{formatMetric((toNumber(client.latestEvaluate?.f1_score) ?? 0) - (toNumber(client.latestFit?.val_f1_score) ?? 0))}</strong>
+                    <strong>{formatMetric((toNumber(client.latestEvaluate?.f1_score) ?? 0) - (toNumber(client.latestFit?.local_test_f1_score ?? client.latestFit?.val_f1_score) ?? 0))}</strong>
                   </div>
                   <div>
                     <span>Confusion matrix</span>
