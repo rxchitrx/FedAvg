@@ -7,3 +7,5 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 artifacts/
+dashboard-ui/node_modules/
+dashboard-ui/dist/

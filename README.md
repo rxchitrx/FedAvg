@@ -369,6 +369,51 @@ python compare_runs.py
 
 This produces evaluator-friendly summary files and a terminal table.
 
+## Web Dashboard
+
+If you do not want to manage experiments from raw terminal logs, use the included control dashboard.
+
+### What it gives you
+
+- run configuration form for FedAvg vs median
+- honest vs poisoned client setup
+- start and stop controls for server and clients
+- live process status cards
+- cleaner log panels
+- per-round metric charts
+- saved run browser
+- comparison table across completed runs
+
+### Backend
+
+Install the updated dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Run the API:
+
+```bash
+uvicorn dashboard_api:app --reload
+```
+
+This starts the control backend at `http://127.0.0.1:8000`.
+
+### Frontend
+
+In a second terminal:
+
+```bash
+cd dashboard-ui
+npm install
+npm run dev
+```
+
+This starts the dashboard UI at `http://127.0.0.1:5173`.
+
+The Vite dev server proxies `/api` requests to the FastAPI backend automatically.
+
 ## Suggested Presentation Evidence
 
 For your final review, the strongest proof will be:

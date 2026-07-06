@@ -3,7 +3,7 @@ import json
 import logging
 import os
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -270,7 +270,7 @@ def apply_attack(parameters: List[np.ndarray]) -> List[np.ndarray]:
 
 class ClientArtifactLogger:
     def __init__(self) -> None:
-        self.started_at = datetime.utcnow().isoformat() + "Z"
+        self.started_at = datetime.now(timezone.utc).isoformat()
         self.run_metadata = {
             "run_name": RUN_NAME,
             "hospital_name": HOSPITAL_NAME,

@@ -2,7 +2,7 @@ import csv
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -131,7 +131,7 @@ def coordinate_wise_median(results: List[Tuple[fl.server.client_proxy.ClientProx
 
 class ServerArtifactLogger:
     def __init__(self) -> None:
-        self.started_at = datetime.utcnow().isoformat() + "Z"
+        self.started_at = datetime.now(timezone.utc).isoformat()
         self.metadata = {
             "run_name": RUN_NAME,
             "server_address": SERVER_ADDRESS,
