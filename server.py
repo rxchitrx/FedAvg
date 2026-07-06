@@ -44,6 +44,7 @@ NUM_ROUNDS = int(os.getenv("NUM_ROUNDS", "5"))
 MIN_AVAILABLE_CLIENTS = int(os.getenv("MIN_AVAILABLE_CLIENTS", "2"))
 LOCAL_EPOCHS = int(os.getenv("LOCAL_EPOCHS", "2"))
 AGGREGATION_STRATEGY = os.getenv("AGGREGATION_STRATEGY", "fedavg").strip().lower()
+DETECTION_Z_THRESHOLD = float(os.getenv("DETECTION_Z_THRESHOLD", "2.5"))
 RUN_NAME = os.getenv("RUN_NAME", "default_run")
 ARTIFACT_ROOT = Path(os.getenv("ARTIFACT_ROOT", "artifacts"))
 SERVER_RUN_DIR = ARTIFACT_ROOT / RUN_NAME / "server"
@@ -69,6 +70,13 @@ def write_json(path: Path, payload: Dict[str, object]) -> None:
         json.dump(payload, handle, indent=2)
 
 
+def coerce_metric_value(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def weighted_average(metrics: List[Tuple[int, Dict[str, float]]]) -> Dict[str, float]:
     if not metrics:
         return {}
@@ -77,7 +85,10 @@ def weighted_average(metrics: List[Tuple[int, Dict[str, float]]]) -> Dict[str, f
     total_examples = sum(num_examples for num_examples, _ in metrics)
     for num_examples, metric_dict in metrics:
         for metric_name, metric_value in metric_dict.items():
-            totals[metric_name] = totals.get(metric_name, 0.0) + (num_examples * float(metric_value))
+            numeric_value = coerce_metric_value(metric_value)
+            if numeric_value is None:
+                continue
+            totals[metric_name] = totals.get(metric_name, 0.0) + (num_examples * numeric_value)
 
     return {
         metric_name: metric_total / total_examples
@@ -129,6 +140,66 @@ def coordinate_wise_median(results: List[Tuple[fl.server.client_proxy.ClientProx
     return ndarrays_to_parameters(aggregated)
 
 
+def flatten_parameters(parameters: Parameters) -> np.ndarray:
+    arrays = parameters_to_ndarrays(parameters)
+    return np.concatenate([array.reshape(-1) for array in arrays])
+
+
+def detect_suspicious_updates(
+    results: List[Tuple[fl.server.client_proxy.ClientProxy, FitRes]],
+) -> Tuple[
+    List[Tuple[fl.server.client_proxy.ClientProxy, FitRes]],
+    List[Tuple[fl.server.client_proxy.ClientProxy, FitRes]],
+    List[Dict[str, object]],
+]:
+    if len(results) < 3:
+        diagnostics = [
+            {
+                "client_id": client_proxy.cid,
+                "distance_to_median": 0.0,
+                "robust_z_score": 0.0,
+                "decision": "accepted",
+                "reason": "needs_at_least_3_clients",
+            }
+            for client_proxy, _ in results
+        ]
+        return results, [], diagnostics
+
+    vectors = np.stack([flatten_parameters(fit_res.parameters) for _, fit_res in results], axis=0)
+    median_vector = np.median(vectors, axis=0)
+    distances = np.linalg.norm(vectors - median_vector, axis=1)
+    distance_median = float(np.median(distances))
+    mad = float(np.median(np.abs(distances - distance_median)))
+    scale = (1.4826 * mad) if mad > 1e-12 else float(np.std(distances) or 1.0)
+    robust_z_scores = np.abs(distances - distance_median) / max(scale, 1e-12)
+
+    suspicious_indices = {
+        index
+        for index, score in enumerate(robust_z_scores)
+        if score > DETECTION_Z_THRESHOLD and distances[index] > distance_median
+    }
+
+    if len(suspicious_indices) >= len(results):
+        suspicious_indices = set()
+
+    accepted = [result for index, result in enumerate(results) if index not in suspicious_indices]
+    rejected = [result for index, result in enumerate(results) if index in suspicious_indices]
+    diagnostics = []
+    for index, (client_proxy, fit_res) in enumerate(results):
+        diagnostics.append(
+            {
+                "client_id": client_proxy.cid,
+                "num_examples": fit_res.num_examples,
+                "distance_to_median": float(distances[index]),
+                "robust_z_score": float(robust_z_scores[index]),
+                "decision": "rejected" if index in suspicious_indices else "accepted",
+                "reason": "outlier_update" if index in suspicious_indices else "within_trusted_cluster",
+            }
+        )
+
+    return accepted, rejected, diagnostics
+
+
 class ServerArtifactLogger:
     def __init__(self) -> None:
         self.started_at = datetime.now(timezone.utc).isoformat()
@@ -139,6 +210,7 @@ class ServerArtifactLogger:
             "min_available_clients": MIN_AVAILABLE_CLIENTS,
             "local_epochs": LOCAL_EPOCHS,
             "aggregation_strategy": AGGREGATION_STRATEGY,
+            "detection_z_threshold": DETECTION_Z_THRESHOLD,
             "started_at": self.started_at,
         }
         self.round_records: List[Dict[str, object]] = []
@@ -237,11 +309,19 @@ class VerboseFedAvg(fl.server.strategy.FedAvg):
                 ),
             )
 
-        aggregated_parameters, aggregated_metrics = self._aggregate_parameters(server_round, results, failures)
+        aggregated_parameters, aggregated_metrics, aggregation_audit = self._aggregate_parameters(server_round, results, failures)
         weighted_metrics = {}
         if results:
+            metric_results = aggregation_audit.get("accepted_results", results)
             weighted_metrics = self.metrics_aggregation_fn(
-                [(fit_res.num_examples, dict(fit_res.metrics)) for _, fit_res in results]
+                [(fit_res.num_examples, dict(fit_res.metrics)) for _, fit_res in metric_results]
+            )
+            weighted_metrics.update(
+                {
+                    "accepted_client_count": float(aggregation_audit.get("accepted_client_count", len(metric_results))),
+                    "rejected_client_count": float(aggregation_audit.get("rejected_client_count", 0)),
+                    "detection_enabled": float(aggregation_audit.get("detection_enabled", False)),
+                }
             )
             LOGGER.info(
                 "[SERVER] Round %d | %s aggregation complete | %s",
@@ -261,6 +341,9 @@ class VerboseFedAvg(fl.server.strategy.FedAvg):
                         "val_recall",
                         "val_f1_score",
                         "client_behavior_poisoned",
+                        "accepted_client_count",
+                        "rejected_client_count",
+                        "detection_enabled",
                     ],
                 ),
             )
@@ -277,7 +360,13 @@ class VerboseFedAvg(fl.server.strategy.FedAvg):
         return aggregated_parameters, aggregated_metrics
 
     def _aggregate_parameters(self, server_round, results, failures):
-        return super().aggregate_fit(server_round, results, failures)
+        aggregated_parameters, aggregated_metrics = super().aggregate_fit(server_round, results, failures)
+        return aggregated_parameters, aggregated_metrics, {
+            "accepted_results": results,
+            "accepted_client_count": len(results),
+            "rejected_client_count": 0,
+            "detection_enabled": False,
+        }
 
     def configure_evaluate(self, server_round, parameters, client_manager):
         LOGGER.info("[SERVER] Round %d | preparing federated evaluation request", server_round)
@@ -338,18 +427,84 @@ class VerboseMedianStrategy(VerboseFedAvg):
             )
         if not results:
             LOGGER.warning("[SERVER] Round %d | no client updates available for median aggregation", server_round)
-            return None, {}
+            return None, {}, {
+                "accepted_results": [],
+                "accepted_client_count": 0,
+                "rejected_client_count": 0,
+                "detection_enabled": False,
+            }
 
         LOGGER.info("[SERVER] Round %d | computing coordinate-wise median across client updates", server_round)
         aggregated_parameters = coordinate_wise_median(results)
-        return aggregated_parameters, {}
+        return aggregated_parameters, {}, {
+            "accepted_results": results,
+            "accepted_client_count": len(results),
+            "rejected_client_count": 0,
+            "detection_enabled": False,
+        }
+
+
+class DetectAndMedianStrategy(VerboseFedAvg):
+    def _aggregate_parameters(self, server_round, results, failures):
+        if failures:
+            LOGGER.warning(
+                "[SERVER] Round %d | proceeding with detection despite failures=%d",
+                server_round,
+                len(failures),
+            )
+        if not results:
+            LOGGER.warning("[SERVER] Round %d | no client updates available for robust aggregation", server_round)
+            return None, {}, {
+                "accepted_results": [],
+                "accepted_client_count": 0,
+                "rejected_client_count": 0,
+                "detection_enabled": True,
+            }
+
+        accepted_results, rejected_results, diagnostics = detect_suspicious_updates(results)
+        LOGGER.info(
+            "[SERVER] Round %d | poisoning detector inspected %d update(s): accepted=%d rejected=%d",
+            server_round,
+            len(results),
+            len(accepted_results),
+            len(rejected_results),
+        )
+        for item in diagnostics:
+            LOGGER.info(
+                "[SERVER] Round %d | detector client=%s decision=%s distance=%.4f robust_z=%.4f reason=%s",
+                server_round,
+                item["client_id"],
+                item["decision"],
+                item["distance_to_median"],
+                item["robust_z_score"],
+                item["reason"],
+            )
+
+        if not accepted_results:
+            LOGGER.warning("[SERVER] Round %d | detector rejected every update; falling back to all results", server_round)
+            accepted_results = results
+            rejected_results = []
+
+        LOGGER.info("[SERVER] Round %d | computing coordinate-wise median over accepted updates only", server_round)
+        aggregated_parameters = coordinate_wise_median(accepted_results)
+        return aggregated_parameters, {}, {
+            "accepted_results": accepted_results,
+            "accepted_client_count": len(accepted_results),
+            "rejected_client_count": len(rejected_results),
+            "detection_enabled": True,
+        }
 
 
 def build_strategy() -> VerboseFedAvg:
-    if AGGREGATION_STRATEGY not in {"fedavg", "median"}:
-        raise ValueError("AGGREGATION_STRATEGY must be either 'fedavg' or 'median'")
+    if AGGREGATION_STRATEGY not in {"fedavg", "median", "detect_median"}:
+        raise ValueError("AGGREGATION_STRATEGY must be 'fedavg', 'median', or 'detect_median'")
 
-    strategy_cls = VerboseFedAvg if AGGREGATION_STRATEGY == "fedavg" else VerboseMedianStrategy
+    strategy_cls_by_name = {
+        "fedavg": VerboseFedAvg,
+        "median": VerboseMedianStrategy,
+        "detect_median": DetectAndMedianStrategy,
+    }
+    strategy_cls = strategy_cls_by_name[AGGREGATION_STRATEGY]
     return strategy_cls(
         fraction_fit=1.0,
         fraction_evaluate=1.0,

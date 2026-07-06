@@ -46,7 +46,45 @@ const defaultConfig = {
       attack_strength: 4,
       enabled: true,
     },
+    {
+      hospital_name: "Hospital_C",
+      data_file: "hospital_B_data.npz",
+      behavior: "honest",
+      attack_mode: "sign_flip",
+      attack_strength: 4,
+      enabled: false,
+    },
   ],
+};
+
+const presets = {
+  clean: {
+    run_name: "baseline_clean_fedavg",
+    aggregation_strategy: "fedavg",
+    clients: [
+      { hospital_name: "Hospital_A", data_file: "hospital_A_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
+      { hospital_name: "Hospital_B", data_file: "hospital_B_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
+      { hospital_name: "Hospital_C", data_file: "hospital_B_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: false },
+    ],
+  },
+  attack: {
+    run_name: "attack_fedavg",
+    aggregation_strategy: "fedavg",
+    clients: [
+      { hospital_name: "Hospital_A", data_file: "hospital_A_data.npz", behavior: "poisoned", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
+      { hospital_name: "Hospital_B", data_file: "hospital_B_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
+      { hospital_name: "Hospital_C", data_file: "hospital_B_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: false },
+    ],
+  },
+  defense: {
+    run_name: "novelty_detect_median",
+    aggregation_strategy: "detect_median",
+    clients: [
+      { hospital_name: "Hospital_A", data_file: "hospital_A_data.npz", behavior: "poisoned", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
+      { hospital_name: "Hospital_B", data_file: "hospital_B_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
+      { hospital_name: "Hospital_C", data_file: "hospital_B_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
+    ],
+  },
 };
 
 function toNumber(value) {
@@ -211,6 +249,140 @@ function App() {
   }, [displayedRun]);
 
   const processLogs = dashboard.processes || {};
+  const selectedRunInterpretation = useMemo(() => {
+    const strategy = globalSummary.metadata.aggregation_strategy || "unknown";
+    const poisoned = clientCards.filter((client) => client.summary?.metadata?.client_behavior === "poisoned");
+    const clientCount = clientCards.length;
+    const finalF1 = toNumber(globalSummary.finalEvaluate?.f1_score);
+
+    if (strategy === "fedavg" && poisoned.length > 0) {
+      return {
+        tone: "danger",
+        title: "This selected run is an attack demo.",
+        body:
+          "A poisoned hospital trained locally, then sent a manipulated update to the server. FedAvg averages that poisoned update with the honest one, so a global accuracy/recall/F1 collapse is expected.",
+      };
+    }
+
+    if (strategy === "median" && poisoned.length > 0 && clientCount < 3) {
+      return {
+        tone: "danger",
+        title: "Median is underpowered in this run.",
+        body:
+          "Median needs an honest majority. With only two clients and one poisoned client, the median defense is not strong enough to prove robustness.",
+      };
+    }
+
+    if (strategy === "median" && poisoned.length > 0) {
+      return {
+        tone: finalF1 !== null && finalF1 > 0.65 ? "success" : "warning",
+        title: "This selected run is the robust-defense demo.",
+        body:
+          "Median compares client updates coordinate by coordinate. With one poisoned client and multiple honest clients, the honest majority should limit how much the attacker can drag the global model.",
+      };
+    }
+
+    if (strategy === "detect_median" && poisoned.length > 0 && clientCount < 3) {
+      return {
+        tone: "danger",
+        title: "Detection needs an honest majority here.",
+        body:
+          "The novelty strategy should run with at least three clients: one poisoned and two honest. With only two clients, the detector cannot reliably know which update is the outlier.",
+      };
+    }
+
+    if (strategy === "detect_median" && poisoned.length > 0) {
+      return {
+        tone: "success",
+        title: "This selected run is the full novelty demo.",
+        body:
+          "The server detects suspicious client updates, excludes rejected updates from aggregation, then computes the median over the accepted client updates.",
+      };
+    }
+
+    if (clientCount > 0) {
+      return {
+        tone: "success",
+        title: "This selected run is the clean baseline.",
+        body:
+          "All recorded hospitals are honest, so this run is the baseline you compare against the poisoned FedAvg attack and median-defense runs.",
+      };
+    }
+
+    return {
+      tone: "neutral",
+      title: "No completed run selected yet.",
+      body: "Start a run or select a saved run to see the model behavior explained here.",
+    };
+  }, [clientCards, globalSummary]);
+
+  const readableLogs = useMemo(() => {
+    return Object.values(processLogs).flatMap((process) =>
+      (process.recent_logs || []).slice(-16).map((line) => ({
+        process: process.name,
+        state: process.state,
+        line,
+      }))
+    );
+  }, [processLogs]);
+
+  const enabledClients = config.clients.filter((client) => client.enabled);
+  const poisonedClients = enabledClients.filter((client) => client.behavior === "poisoned");
+  const isFedAvgAttack = config.aggregation_strategy === "fedavg" && poisonedClients.length > 0;
+  const isMedianUnderpowered =
+    config.aggregation_strategy === "median" && poisonedClients.length > 0 && enabledClients.length < 3;
+  const isMedianDefense =
+    config.aggregation_strategy === "median" && poisonedClients.length > 0 && enabledClients.length >= 3;
+  const isNoveltyDefense =
+    config.aggregation_strategy === "detect_median" && poisonedClients.length > 0 && enabledClients.length >= 3;
+  const isNoveltyUnderpowered =
+    config.aggregation_strategy === "detect_median" && poisonedClients.length > 0 && enabledClients.length < 3;
+  const scenarioReadout = useMemo(() => {
+    if (isFedAvgAttack) {
+      return {
+        tone: "danger",
+        title: "Attack demo: poisoned update is expected to damage the global model.",
+      };
+    }
+    if (isMedianUnderpowered) {
+      return {
+        tone: "danger",
+        title: "Median warning: median needs at least 3 clients to be useful against 1 poisoned client.",
+      };
+    }
+    if (isNoveltyUnderpowered) {
+      return {
+        tone: "danger",
+        title: "Novelty warning: detection needs at least 3 clients so there is an honest majority.",
+      };
+    }
+    if (isNoveltyDefense) {
+      return {
+        tone: "success",
+        title: "Novelty demo: detect the poisoned update, reject it, then median-aggregate trusted updates.",
+      };
+    }
+    if (isMedianDefense) {
+      return {
+        tone: "success",
+        title: "Defense demo: median has a majority of honest clients to compare against the poisoned update.",
+      };
+    }
+    return {
+      tone: "",
+      title: "Clean demo: all enabled clients are honest.",
+    };
+  }, [isFedAvgAttack, isMedianDefense, isMedianUnderpowered, isNoveltyDefense, isNoveltyUnderpowered]);
+
+  const applyPreset = (presetName) => {
+    const preset = presets[presetName];
+    setConfig((current) => ({
+      ...current,
+      run_name: preset.run_name,
+      aggregation_strategy: preset.aggregation_strategy,
+      clients: preset.clients,
+    }));
+  };
 
   const startRun = async () => {
     setBusy(true);
@@ -315,7 +487,8 @@ function App() {
                 }
               >
                 <option value="fedavg">FedAvg</option>
-                <option value="median">Median</option>
+                <option value="median">Median only</option>
+                <option value="detect_median">Detect + median</option>
               </select>
             </div>
             <button className="primary-button" onClick={startRun} disabled={busy}>
@@ -339,6 +512,22 @@ function App() {
                 <span className="eyebrow">Run configuration</span>
                 <h3>Scenario builder</h3>
               </div>
+            </div>
+
+            <div className="preset-row">
+              <button type="button" onClick={() => applyPreset("clean")}>Clean FedAvg</button>
+              <button type="button" onClick={() => applyPreset("attack")}>Attack FedAvg</button>
+              <button type="button" onClick={() => applyPreset("defense")}>Novelty: Detect + Median</button>
+            </div>
+
+            <div
+              className={`scenario-readout ${scenarioReadout.tone}`}
+            >
+              <strong>{scenarioReadout.title}</strong>
+              <span>
+                Enabled clients: {enabledClients.length} | Poisoned clients: {poisonedClients.length} | Strategy:{" "}
+                {config.aggregation_strategy}
+              </span>
             </div>
 
             <div className="form-grid">
@@ -564,9 +753,8 @@ function App() {
               )}
             </div>
             <div className="chart-caption">
-              The green line is the hospital-local validation score before aggregation. The blue line is the global model
-              score after both clients send updates and the server aggregates them. This chart now compares local test
-              versus global test on the same split.
+              The green line is the hospital-local test score before aggregation. The blue line is the global model score
+              after the server aggregates the client updates. For new runs, both lines use the same client test split.
             </div>
           </div>
 
@@ -602,12 +790,24 @@ function App() {
                 <span>Global loss</span>
                 <strong>{formatMetric(globalSummary.finalEvaluate?.loss)}</strong>
               </div>
+              <div>
+                <span>Accepted updates</span>
+                <strong>{formatMetric(globalSummary.finalFit?.accepted_client_count, 0)}</strong>
+              </div>
+              <div>
+                <span>Rejected updates</span>
+                <strong>{formatMetric(globalSummary.finalFit?.rejected_client_count, 0)}</strong>
+              </div>
             </div>
             <div className="global-summary-note">
               <p>
                 Local fit metrics are the hospitals&apos; scores before aggregation. Global metrics are the server-aggregated
                 model after both clients send updates back.
               </p>
+            </div>
+            <div className={`interpretation-card ${selectedRunInterpretation.tone}`}>
+              <strong>{selectedRunInterpretation.title}</strong>
+              <p>{selectedRunInterpretation.body}</p>
             </div>
           </div>
         </section>
@@ -680,7 +880,7 @@ function App() {
         </section>
 
         <section id="comparisons-table" className="grid-two section-block">
-          <div id="comparisons" className="card comparison-card">
+          <div className="card comparison-card">
             <div className="section-head">
               <div>
                 <span className="eyebrow">Run comparison</span>
@@ -695,6 +895,7 @@ function App() {
                   <th>Accuracy</th>
                   <th>Recall</th>
                   <th>F1</th>
+                  <th>Rejected</th>
                 </tr>
               </thead>
               <tbody>
@@ -712,6 +913,7 @@ function App() {
                       <td>{formatMetric(row.final_eval_accuracy)}</td>
                       <td>{formatMetric(row.final_eval_recall)}</td>
                       <td>{formatMetric(row.final_eval_f1_score)}</td>
+                      <td>{formatMetric(row.rejected_client_count, 0)}</td>
                     </tr>
                   );
                 })}
@@ -726,15 +928,13 @@ function App() {
                 <h3>Readable activity feed</h3>
               </div>
             </div>
-            <div className="logs-grid">
-              {Object.values(processLogs).length ? (
-                Object.values(processLogs).map((process) => (
-                  <div key={process.name} className="log-column">
-                    <div className="log-column-head">
-                      <strong>{process.name}</strong>
-                      <span className={badgeClass(process.state)}>{process.state}</span>
-                    </div>
-                    <pre>{(process.recent_logs || []).slice(-12).join("\n") || "No logs yet."}</pre>
+            <div className="activity-feed">
+              {readableLogs.length ? (
+                readableLogs.slice(-42).map((entry, index) => (
+                  <div className="activity-row" key={`${entry.process}-${index}-${entry.line}`}>
+                    <span className="activity-source">{entry.process}</span>
+                    <span className={badgeClass(entry.state)}>{entry.state}</span>
+                    <p>{entry.line}</p>
                   </div>
                 ))
               ) : (

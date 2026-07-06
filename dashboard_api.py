@@ -155,6 +155,10 @@ class RunController:
         if any(proc.status()["state"] == "running" for proc in self.processes.values()):
             raise HTTPException(status_code=400, detail="A run is already active. Stop it before starting another.")
 
+        enabled_clients = [client for client in config.clients if client.enabled]
+        if len(enabled_clients) < 2:
+            raise HTTPException(status_code=400, detail="At least two enabled clients are required.")
+
         self.current_run_name = config.run_name
         run_dir = ARTIFACT_ROOT / config.run_name
         if run_dir.exists():
@@ -168,6 +172,7 @@ class RunController:
                 "LOCAL_EPOCHS": str(config.local_epochs),
                 "RUN_NAME": config.run_name,
                 "ARTIFACT_ROOT": str(ARTIFACT_ROOT),
+                "MIN_AVAILABLE_CLIENTS": str(len(enabled_clients)),
             }
         )
 
@@ -178,9 +183,7 @@ class RunController:
 
         time.sleep(1.0)
 
-        for idx, client in enumerate(config.clients):
-            if not client.enabled:
-                continue
+        for idx, client in enumerate(enabled_clients):
             client_env = common_env | {
                 "HOSPITAL_NAME": client.hospital_name,
                 "DATA_FILE": client.data_file,

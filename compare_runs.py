@@ -46,6 +46,9 @@ def collect_run_summaries() -> List[Dict[str, object]]:
                 "final_eval_specificity": final_eval.get("specificity"),
                 "final_eval_f1_score": final_eval.get("f1_score"),
                 "poisoned_updates_seen": final_fit.get("client_behavior_poisoned"),
+                "accepted_client_count": final_fit.get("accepted_client_count"),
+                "rejected_client_count": final_fit.get("rejected_client_count"),
+                "detection_enabled": final_fit.get("detection_enabled"),
             }
         )
 
@@ -80,6 +83,8 @@ def print_table(rows: List[Dict[str, object]]) -> None:
         "final_eval_recall",
         "final_eval_f1_score",
         "poisoned_updates_seen",
+        "accepted_client_count",
+        "rejected_client_count",
     ]
     widths = {header: max(len(header), *(len(str(row.get(header, ""))) for row in rows)) for header in headers}
     print(" | ".join(header.ljust(widths[header]) for header in headers))

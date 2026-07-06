@@ -7,7 +7,8 @@ This repository is now set up as an evaluator-ready prototype with:
 - project metadata and dependency files
 - verbose client/server logs
 - malicious-client simulation mode
-- switchable `fedavg` and robust `median` aggregation
+- switchable `fedavg`, `median`, and `detect_median` aggregation
+- poisoned-update detection with rejected-client exclusion before robust aggregation
 - CSV/JSON artifact logging
 - post-run comparison output for presentation evidence
 
@@ -18,15 +19,15 @@ The intended final-demo story is:
 1. show privacy-preserving collaboration across hospitals
 2. show standard FedAvg training in a clean setting
 3. show how a poisoned client can hurt standard averaging
-4. show how a robust median aggregator resists that poisoned update better
-5. show all results again through saved CSV/JSON outputs
+4. show the novelty path: detect the suspicious client update, exclude it, then aggregate trusted updates with median
+5. compare normal federated learning versus the novelty path through dashboard charts and CSV/JSON outputs
 
 ## Repository Layout
 
 ```text
 FedAvg/
 ├── client.py               # Flower client with verbose local training and attack mode
-├── server.py               # Flower server with FedAvg/median strategy selection
+├── server.py               # Flower server with FedAvg/median/detect+median strategy selection
 ├── compare_runs.py         # Compare completed experiment runs from saved artifacts
 ├── hospital_A_data.npz     # Local dataset shard for Hospital A
 ├── hospital_B_data.npz     # Local dataset shard for Hospital B
@@ -152,6 +153,12 @@ or
 export AGGREGATION_STRATEGY=median
 ```
 
+or
+
+```bash
+export AGGREGATION_STRATEGY=detect_median
+```
+
 ### `fedavg`
 
 Standard weighted federated averaging.
@@ -159,6 +166,19 @@ Standard weighted federated averaging.
 ### `median`
 
 Coordinate-wise median aggregation across client updates. This is a stronger demo baseline against extreme poisoned updates than plain FedAvg.
+
+Important demo note: median only becomes meaningful when honest clients are the majority. With exactly two clients and one poisoned client, the coordinate-wise median is not a strong defense. For the defended demo, run three clients: one poisoned client and two honest clients.
+
+### `detect_median`
+
+The final-project novelty strategy:
+
+1. inspect every received client update
+2. measure each update's distance from the coordinate-wise median update
+3. reject suspicious outlier updates
+4. aggregate only accepted updates with coordinate-wise median
+
+This is the recommended final demo strategy because it directly shows both project novelties: poisoned-update detection and median-based robust aggregation.
 
 ## Artifact Logging
 
@@ -229,7 +249,8 @@ and prints a simple comparison table in the terminal.
 |---|---|---|
 | `NUM_ROUNDS` | Total federated rounds | `5` |
 | `MIN_AVAILABLE_CLIENTS` | Minimum required clients | `2` |
-| `AGGREGATION_STRATEGY` | `fedavg` or `median` | `fedavg` |
+| `AGGREGATION_STRATEGY` | `fedavg`, `median`, or `detect_median` | `fedavg` |
+| `DETECTION_Z_THRESHOLD` | Robust z-score cutoff for rejecting suspicious updates | `2.5` |
 
 See [.env.example](/Users/rachit/Code/AIML_federatedLearning/.env.example:1) for a copyable template.
 
@@ -329,22 +350,25 @@ export ATTACK_STRENGTH="4.0"
 python client.py
 ```
 
-### 3. Defended run with median aggregation
+### 3. Novelty run with detection + median aggregation
+
+For the dashboard workflow, use the `Novelty: Detect + Median` preset. It enables a third demo client so the detector has two honest updates against one poisoned update.
 
 Server:
 
 ```bash
-export RUN_NAME="attack_median"
-export AGGREGATION_STRATEGY="median"
+export RUN_NAME="novelty_detect_median"
+export MIN_AVAILABLE_CLIENTS=3
+export AGGREGATION_STRATEGY="detect_median"
 python server.py
 ```
 
-Honest client:
+Honest client A:
 
 ```bash
 export HOSPITAL_NAME="Hospital_A"
 export DATA_FILE="hospital_A_data.npz"
-export RUN_NAME="attack_median"
+export RUN_NAME="novelty_detect_median"
 export CLIENT_BEHAVIOR="honest"
 python client.py
 ```
@@ -354,10 +378,20 @@ Poisoned client:
 ```bash
 export HOSPITAL_NAME="Hospital_B"
 export DATA_FILE="hospital_B_data.npz"
-export RUN_NAME="attack_median"
+export RUN_NAME="novelty_detect_median"
 export CLIENT_BEHAVIOR="poisoned"
 export ATTACK_MODE="sign_flip"
 export ATTACK_STRENGTH="4.0"
+python client.py
+```
+
+Honest client C:
+
+```bash
+export HOSPITAL_NAME="Hospital_C"
+export DATA_FILE="hospital_B_data.npz"
+export RUN_NAME="novelty_detect_median"
+export CLIENT_BEHAVIOR="honest"
 python client.py
 ```
 
@@ -375,14 +409,14 @@ If you do not want to manage experiments from raw terminal logs, use the include
 
 ### What it gives you
 
-- run configuration form for FedAvg vs median
+- run configuration form for normal FedAvg, median-only, and detect+median novelty runs
 - honest vs poisoned client setup
 - start and stop controls for server and clients
 - live process status cards
 - cleaner log panels
 - per-round metric charts
 - saved run browser
-- comparison table across completed runs
+- comparison table across completed runs, including rejected update counts
 
 ### Backend
 
