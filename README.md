@@ -203,6 +203,28 @@ The server writes:
 - `fit_rounds.csv`
 - `evaluation_rounds.csv`
 - `summary.json`
+- `update_audits/round_<N>_update_audit.json`
+
+The update audit file shows what each client sent to the server before aggregation:
+
+- Flower client id and hospital name
+- client behavior and attack mode
+- accepted/rejected aggregation decision
+- tensor count and scalar count
+- per-tensor mean, standard deviation, min, max, L2 norm, and preview values
+- aggregated global parameter summary
+
+To print the latest audit for a run:
+
+```bash
+python inspect_update_audit.py update_audit_demo
+```
+
+By default the audit stores summaries, not all 105k+ scalar values. To save the full received tensors as compressed `.npz` files as well:
+
+```bash
+export SAVE_FULL_CLIENT_UPDATES=true
+```
 
 ### Run comparison artifacts
 
@@ -251,6 +273,9 @@ and prints a simple comparison table in the terminal.
 | `MIN_AVAILABLE_CLIENTS` | Minimum required clients | `2` |
 | `AGGREGATION_STRATEGY` | `fedavg`, `median`, or `detect_median` | `fedavg` |
 | `DETECTION_Z_THRESHOLD` | Robust z-score cutoff for rejecting suspicious updates | `2.5` |
+| `UPDATE_AUDIT_ENABLED` | Save per-client update summaries before aggregation | `true` |
+| `SAVE_FULL_CLIENT_UPDATES` | Save full received client tensors as `.npz` files | `false` |
+| `UPDATE_AUDIT_PREVIEW_VALUES` | Number of scalar values previewed per tensor | `8` |
 
 See [.env.example](/Users/rachit/Code/AIML_federatedLearning/.env.example:1) for a copyable template.
 

@@ -404,6 +404,10 @@ class PneumoniaClient(fl.client.NumPyClient):
             "local_test_recall": local_test_metrics["recall"],
             "local_test_specificity": local_test_metrics["specificity"],
             "local_test_f1_score": local_test_metrics["f1_score"],
+            "hospital_name": HOSPITAL_NAME,
+            "data_file": DATA_FILE,
+            "client_behavior": CLIENT_BEHAVIOR,
+            "attack_mode": ATTACK_MODE,
             "client_behavior_poisoned": 1.0 if CLIENT_BEHAVIOR == "poisoned" else 0.0,
         }
         self.artifact_logger.record_round_fit(round_number, fit_metrics)

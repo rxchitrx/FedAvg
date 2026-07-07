@@ -45,6 +45,9 @@ MIN_AVAILABLE_CLIENTS = int(os.getenv("MIN_AVAILABLE_CLIENTS", "2"))
 LOCAL_EPOCHS = int(os.getenv("LOCAL_EPOCHS", "2"))
 AGGREGATION_STRATEGY = os.getenv("AGGREGATION_STRATEGY", "fedavg").strip().lower()
 DETECTION_Z_THRESHOLD = float(os.getenv("DETECTION_Z_THRESHOLD", "2.5"))
+UPDATE_AUDIT_ENABLED = os.getenv("UPDATE_AUDIT_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+SAVE_FULL_CLIENT_UPDATES = os.getenv("SAVE_FULL_CLIENT_UPDATES", "false").strip().lower() in {"1", "true", "yes", "on"}
+UPDATE_AUDIT_PREVIEW_VALUES = int(os.getenv("UPDATE_AUDIT_PREVIEW_VALUES", "8"))
 RUN_NAME = os.getenv("RUN_NAME", "default_run")
 ARTIFACT_ROOT = Path(os.getenv("ARTIFACT_ROOT", "artifacts"))
 SERVER_RUN_DIR = ARTIFACT_ROOT / RUN_NAME / "server"
@@ -145,6 +148,42 @@ def flatten_parameters(parameters: Parameters) -> np.ndarray:
     return np.concatenate([array.reshape(-1) for array in arrays])
 
 
+def array_summary(array: np.ndarray) -> Dict[str, object]:
+    flattened = array.reshape(-1)
+    preview_count = min(UPDATE_AUDIT_PREVIEW_VALUES, flattened.size)
+    return {
+        "shape": list(array.shape),
+        "scalar_count": int(array.size),
+        "mean": float(np.mean(flattened)),
+        "std": float(np.std(flattened)),
+        "min": float(np.min(flattened)),
+        "max": float(np.max(flattened)),
+        "l2_norm": float(np.linalg.norm(flattened)),
+        "preview_values": [float(value) for value in flattened[:preview_count]],
+    }
+
+
+def parameter_summary(parameters: Parameters) -> Dict[str, object]:
+    arrays = parameters_to_ndarrays(parameters)
+    flattened = np.concatenate([array.reshape(-1) for array in arrays])
+    return {
+        "tensor_count": len(arrays),
+        "scalar_count": int(flattened.size),
+        "overall": array_summary(flattened),
+        "tensors": [
+            {
+                "tensor_index": index,
+                **array_summary(array),
+            }
+            for index, array in enumerate(arrays)
+        ],
+    }
+
+
+def safe_filename(value: str) -> str:
+    return "".join(character if character.isalnum() or character in {"-", "_"} else "_" for character in value)
+
+
 def detect_suspicious_updates(
     results: List[Tuple[fl.server.client_proxy.ClientProxy, FitRes]],
 ) -> Tuple[
@@ -211,12 +250,15 @@ class ServerArtifactLogger:
             "local_epochs": LOCAL_EPOCHS,
             "aggregation_strategy": AGGREGATION_STRATEGY,
             "detection_z_threshold": DETECTION_Z_THRESHOLD,
+            "update_audit_enabled": UPDATE_AUDIT_ENABLED,
+            "save_full_client_updates": SAVE_FULL_CLIENT_UPDATES,
             "started_at": self.started_at,
         }
         self.round_records: List[Dict[str, object]] = []
         self.fit_csv_path = SERVER_RUN_DIR / "fit_rounds.csv"
         self.eval_csv_path = SERVER_RUN_DIR / "evaluation_rounds.csv"
         self.summary_json_path = SERVER_RUN_DIR / "summary.json"
+        self.update_audit_dir = SERVER_RUN_DIR / "update_audits"
         ensure_directory(SERVER_RUN_DIR)
 
     def record_fit_round(self, round_number: int, metrics: Dict[str, float], client_count: int) -> None:
@@ -245,6 +287,69 @@ class ServerArtifactLogger:
         self.round_records.append({"phase": "evaluate", **row})
         append_csv_row(self.eval_csv_path, list(row.keys()), row)
         self.flush()
+
+    def record_update_audit(
+        self,
+        round_number: int,
+        results: List[Tuple[fl.server.client_proxy.ClientProxy, FitRes]],
+        aggregation_audit: Dict[str, object],
+        aggregated_parameters: Parameters | None,
+    ) -> None:
+        if not UPDATE_AUDIT_ENABLED:
+            return
+
+        ensure_directory(self.update_audit_dir)
+        accepted_ids = {
+            client_proxy.cid
+            for client_proxy, _ in aggregation_audit.get("accepted_results", [])
+        }
+        rejected_ids = {
+            client_proxy.cid
+            for client_proxy, _ in aggregation_audit.get("rejected_results", [])
+        }
+        client_summaries = []
+        for client_proxy, fit_res in results:
+            metrics = dict(fit_res.metrics)
+            label = str(metrics.get("hospital_name") or client_proxy.cid)
+            update_summary = parameter_summary(fit_res.parameters)
+
+            full_update_path = None
+            if SAVE_FULL_CLIENT_UPDATES:
+                arrays = parameters_to_ndarrays(fit_res.parameters)
+                full_update_path = self.update_audit_dir / (
+                    f"round_{round_number:03d}_{safe_filename(label)}_{safe_filename(client_proxy.cid)}_full_update.npz"
+                )
+                np.savez_compressed(
+                    full_update_path,
+                    **{f"tensor_{index:02d}": array for index, array in enumerate(arrays)},
+                )
+
+            client_summaries.append(
+                {
+                    "client_id": client_proxy.cid,
+                    "hospital_name": metrics.get("hospital_name"),
+                    "data_file": metrics.get("data_file"),
+                    "client_behavior": metrics.get("client_behavior"),
+                    "attack_mode": metrics.get("attack_mode"),
+                    "num_examples": fit_res.num_examples,
+                    "aggregation_decision": "rejected" if client_proxy.cid in rejected_ids else "accepted",
+                    "included_in_aggregation": client_proxy.cid in accepted_ids or not accepted_ids,
+                    "full_update_npz": None if full_update_path is None else str(full_update_path.relative_to(ARTIFACT_ROOT / RUN_NAME)),
+                    "parameter_summary": update_summary,
+                }
+            )
+
+        payload = {
+            "run_name": RUN_NAME,
+            "round": round_number,
+            "aggregation_strategy": AGGREGATION_STRATEGY,
+            "detection_enabled": bool(aggregation_audit.get("detection_enabled", False)),
+            "accepted_client_count": int(aggregation_audit.get("accepted_client_count", len(results))),
+            "rejected_client_count": int(aggregation_audit.get("rejected_client_count", 0)),
+            "clients": client_summaries,
+            "aggregated_parameter_summary": None if aggregated_parameters is None else parameter_summary(aggregated_parameters),
+        }
+        write_json(self.update_audit_dir / f"round_{round_number:03d}_update_audit.json", payload)
 
     def flush(self) -> None:
         final_fit = next((item for item in reversed(self.round_records) if item["phase"] == "fit"), None)
@@ -356,6 +461,12 @@ class VerboseFedAvg(fl.server.strategy.FedAvg):
                 summarize_parameters(aggregated_parameters),
             )
 
+        SERVER_ARTIFACT_LOGGER.record_update_audit(
+            server_round,
+            results,
+            aggregation_audit,
+            aggregated_parameters,
+        )
         LOGGER.info("[SERVER] Round %d | aggregated global model will be broadcast to clients", server_round)
         return aggregated_parameters, aggregated_metrics
 
@@ -363,6 +474,7 @@ class VerboseFedAvg(fl.server.strategy.FedAvg):
         aggregated_parameters, aggregated_metrics = super().aggregate_fit(server_round, results, failures)
         return aggregated_parameters, aggregated_metrics, {
             "accepted_results": results,
+            "rejected_results": [],
             "accepted_client_count": len(results),
             "rejected_client_count": 0,
             "detection_enabled": False,
@@ -429,6 +541,7 @@ class VerboseMedianStrategy(VerboseFedAvg):
             LOGGER.warning("[SERVER] Round %d | no client updates available for median aggregation", server_round)
             return None, {}, {
                 "accepted_results": [],
+                "rejected_results": [],
                 "accepted_client_count": 0,
                 "rejected_client_count": 0,
                 "detection_enabled": False,
@@ -438,6 +551,7 @@ class VerboseMedianStrategy(VerboseFedAvg):
         aggregated_parameters = coordinate_wise_median(results)
         return aggregated_parameters, {}, {
             "accepted_results": results,
+            "rejected_results": [],
             "accepted_client_count": len(results),
             "rejected_client_count": 0,
             "detection_enabled": False,
@@ -456,6 +570,7 @@ class DetectAndMedianStrategy(VerboseFedAvg):
             LOGGER.warning("[SERVER] Round %d | no client updates available for robust aggregation", server_round)
             return None, {}, {
                 "accepted_results": [],
+                "rejected_results": [],
                 "accepted_client_count": 0,
                 "rejected_client_count": 0,
                 "detection_enabled": True,
@@ -489,6 +604,7 @@ class DetectAndMedianStrategy(VerboseFedAvg):
         aggregated_parameters = coordinate_wise_median(accepted_results)
         return aggregated_parameters, {}, {
             "accepted_results": accepted_results,
+            "rejected_results": rejected_results,
             "accepted_client_count": len(accepted_results),
             "rejected_client_count": len(rejected_results),
             "detection_enabled": True,
