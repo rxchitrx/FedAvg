@@ -98,12 +98,28 @@ function formatMetric(value, digits = 3) {
   return number === null ? "--" : number.toFixed(digits);
 }
 
+function formatInteger(value) {
+  const number = toNumber(value);
+  return number === null ? "--" : Math.round(number).toLocaleString();
+}
+
+function formatStrategyName(strategy) {
+  if (strategy === "detect_median") return "Detect + median";
+  if (strategy === "fedavg") return "FedAvg";
+  if (strategy === "median") return "Median only";
+  return strategy || "--";
+}
+
 function badgeClass(state) {
   return `badge badge-${state || "idle"}`;
 }
 
 function getLatestByPhase(roundHistory, phase) {
   return [...(roundHistory || [])].reverse().find((entry) => entry.phase === phase) || null;
+}
+
+function buildMetricList(items) {
+  return items.filter((item) => item.value !== undefined && item.value !== null && item.value !== "" && item.value !== "--");
 }
 
 function App() {
@@ -316,16 +332,6 @@ function App() {
     };
   }, [clientCards, globalSummary]);
 
-  const readableLogs = useMemo(() => {
-    return Object.values(processLogs).flatMap((process) =>
-      (process.recent_logs || []).slice(-16).map((line) => ({
-        process: process.name,
-        state: process.state,
-        line,
-      }))
-    );
-  }, [processLogs]);
-
   const enabledClients = config.clients.filter((client) => client.enabled);
   const poisonedClients = enabledClients.filter((client) => client.behavior === "poisoned");
   const isFedAvgAttack = config.aggregation_strategy === "fedavg" && poisonedClients.length > 0;
@@ -373,6 +379,140 @@ function App() {
       title: "Clean demo: all enabled clients are honest.",
     };
   }, [isFedAvgAttack, isMedianDefense, isMedianUnderpowered, isNoveltyDefense, isNoveltyUnderpowered]);
+
+  const presentableLog = useMemo(() => {
+    const latestAudit = displayedRun.latest_update_audit || {};
+    const auditClients = latestAudit.clients || [];
+    const clientByName = new Map(clientCards.map((client) => [client.name, client]));
+    const configuredClients = enabledClients.map((client) => ({
+      hospital_name: client.hospital_name,
+      client_behavior: client.behavior,
+      data_file: client.data_file,
+    }));
+    const visibleClients = auditClients.length ? auditClients : configuredClients;
+    const strategy = globalSummary.metadata.aggregation_strategy || config.aggregation_strategy;
+    const finalEval = globalSummary.finalEvaluate || {};
+    const finalFit = globalSummary.finalFit || {};
+    const serverProcess = processLogs.server;
+    const clientProcesses = Object.values(processLogs).filter((process) => process.name !== "server");
+
+    const events = [
+      {
+        tone: "info",
+        label: "Run started",
+        title: "Federated learning network initialized",
+        body: `1 server is coordinating ${visibleClients.length || enabledClients.length} client(s): ${
+          (visibleClients.length ? visibleClients : enabledClients)
+            .map((client) => `${client.hospital_name || client.name} (${client.client_behavior || client.behavior || "unknown"})`)
+            .join(", ") || "waiting for clients"
+        }.`,
+        metrics: buildMetricList([
+          { label: "Server", value: serverProcess?.state || "ready" },
+          { label: "Client processes", value: clientProcesses.length || visibleClients.length || enabledClients.length },
+          { label: "Strategy", value: formatStrategyName(strategy) },
+          { label: "Rounds", value: globalSummary.metadata.num_rounds || config.num_rounds },
+          { label: "Local epochs", value: globalSummary.metadata.local_epochs || config.local_epochs },
+        ]),
+      },
+    ];
+
+    if (auditClients.length) {
+      auditClients.forEach((client) => {
+        const matchedClient = clientByName.get(client.hospital_name);
+        const latestFit = matchedClient?.latestFit || {};
+        const summary = client.parameter_summary || {};
+        const overall = summary.overall || {};
+        const previewValues = overall.preview_values || [];
+        events.push({
+          tone: client.aggregation_decision === "rejected" ? "danger" : "success",
+          label: client.client_behavior === "poisoned" ? "Poisoned client" : "Client trained",
+          title: `${client.hospital_name || client.client_id} finished local training and sent parameters`,
+          body: `${client.hospital_name || "Client"} trained on ${formatInteger(client.num_examples)} examples, then sent ${formatInteger(summary.scalar_count)} scalar values across ${formatInteger(summary.tensor_count)} tensors to the server.`,
+          metrics: buildMetricList([
+            { label: "Behavior", value: client.client_behavior || "unknown" },
+            { label: "Decision", value: client.aggregation_decision || "pending" },
+            { label: "Train accuracy", value: formatMetric(latestFit.train_accuracy) },
+            { label: "Train F1", value: formatMetric(latestFit.train_f1_score) },
+            { label: "Local test accuracy", value: formatMetric(latestFit.local_test_accuracy ?? latestFit.val_accuracy) },
+            { label: "Local test F1", value: formatMetric(latestFit.local_test_f1_score ?? latestFit.val_f1_score) },
+            { label: "L2 norm", value: formatMetric(overall.l2_norm, 4) },
+            { label: "Mean", value: formatMetric(overall.mean, 6) },
+            { label: "Std", value: formatMetric(overall.std, 6) },
+            { label: "Preview", value: previewValues.slice(0, 4).map((value) => formatMetric(value, 4)).join(", ") },
+          ]),
+        });
+      });
+    } else {
+      events.push({
+        tone: "pending",
+        label: "Client training",
+        title: "Waiting for client update audit",
+        body: "As soon as clients finish local training, this panel will show each hospital's metrics and parameter summary.",
+        metrics: buildMetricList(
+          enabledClients.map((client) => ({
+            label: client.hospital_name,
+            value: client.behavior,
+          }))
+        ),
+      });
+    }
+
+    if (latestAudit.round) {
+      const aggregated = latestAudit.aggregated_parameter_summary || {};
+      const overall = aggregated.overall || {};
+      const action =
+        strategy === "detect_median"
+          ? "The server inspected incoming updates, rejected suspicious outliers, then computed a coordinate-wise median over accepted updates."
+          : strategy === "median"
+            ? "The server computed a coordinate-wise median across the received client updates."
+            : "The server computed a weighted average across the received client updates.";
+      events.push({
+        tone: toNumber(latestAudit.rejected_client_count) > 0 ? "warning" : "info",
+        label: "Server aggregation",
+        title: "Server received client parameters and produced the global model",
+        body: action,
+        metrics: buildMetricList([
+          { label: "Received updates", value: auditClients.length },
+          { label: "Accepted", value: latestAudit.accepted_client_count },
+          { label: "Rejected", value: latestAudit.rejected_client_count },
+          { label: "Global tensors", value: aggregated.tensor_count },
+          { label: "Global scalars", value: formatInteger(aggregated.scalar_count) },
+          { label: "Global L2 norm", value: formatMetric(overall.l2_norm, 4) },
+          { label: "Global mean", value: formatMetric(overall.mean, 6) },
+          { label: "Global std", value: formatMetric(overall.std, 6) },
+        ]),
+      });
+    }
+
+    if (finalEval && Object.keys(finalEval).length) {
+      events.push({
+        tone: "success",
+        label: "Final model",
+        title: "Final global model evaluation",
+        body: "After aggregation, the global model was sent back to the clients and evaluated on their test splits.",
+        metrics: buildMetricList([
+          { label: "Accuracy", value: formatMetric(finalEval.accuracy) },
+          { label: "Precision", value: formatMetric(finalEval.precision) },
+          { label: "Recall", value: formatMetric(finalEval.recall) },
+          { label: "Specificity", value: formatMetric(finalEval.specificity) },
+          { label: "F1", value: formatMetric(finalEval.f1_score) },
+          { label: "Loss", value: formatMetric(finalEval.loss) },
+          { label: "Accepted updates", value: formatMetric(finalFit.accepted_client_count, 0) },
+          { label: "Rejected updates", value: formatMetric(finalFit.rejected_client_count, 0) },
+        ]),
+      });
+    } else {
+      events.push({
+        tone: "pending",
+        label: "Final model",
+        title: "Waiting for global model evaluation",
+        body: "Final model metrics will appear here after the server completes aggregation and evaluation.",
+        metrics: [],
+      });
+    }
+
+    return events;
+  }, [clientCards, config, displayedRun, enabledClients, globalSummary, processLogs]);
 
   const applyPreset = (presetName) => {
     const preset = presets[presetName];
@@ -921,25 +1061,36 @@ function App() {
             </table>
           </div>
 
-          <div id="live-logs" className="card logs-card">
+          <div id="live-logs" className="card logs-card presentation-log-card">
             <div className="section-head">
               <div>
-                <span className="eyebrow">Process logs</span>
-                <h3>Readable activity feed</h3>
+                <span className="eyebrow">Presentation log</span>
+                <h3>What happened in this run</h3>
               </div>
             </div>
-            <div className="activity-feed">
-              {readableLogs.length ? (
-                readableLogs.slice(-42).map((entry, index) => (
-                  <div className="activity-row" key={`${entry.process}-${index}-${entry.line}`}>
-                    <span className="activity-source">{entry.process}</span>
-                    <span className={badgeClass(entry.state)}>{entry.state}</span>
-                    <p>{entry.line}</p>
+            <div className="presentation-log">
+              {presentableLog.map((event, index) => (
+                <article className={`presentation-event ${event.tone}`} key={`${event.label}-${index}`}>
+                  <div className="event-index">{index + 1}</div>
+                  <div className="event-body">
+                    <div className="event-heading">
+                      <span className="event-label">{event.label}</span>
+                      <h4>{event.title}</h4>
+                    </div>
+                    <p>{event.body}</p>
+                    {event.metrics.length ? (
+                      <div className="event-metrics">
+                        {event.metrics.map((metric) => (
+                          <div key={`${event.label}-${metric.label}`}>
+                            <span>{metric.label}</span>
+                            <strong>{metric.value}</strong>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
-                ))
-              ) : (
-                <div className="empty-state">No live process logs yet.</div>
-              )}
+                </article>
+              ))}
             </div>
           </div>
         </section>

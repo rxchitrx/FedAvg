@@ -63,6 +63,19 @@ def should_keep_log_line(line: str) -> bool:
     return not any(fragment in line for fragment in noisy_fragments)
 
 
+def collect_latest_update_audit(server_dir: Path) -> dict[str, Any]:
+    audit_dir = server_dir / "update_audits"
+    if not audit_dir.exists():
+        return {}
+    audit_paths = sorted(audit_dir.glob("round_*_update_audit.json"))
+    if not audit_paths:
+        return {}
+    latest_path = audit_paths[-1]
+    payload = read_json(latest_path)
+    payload["artifact_path"] = str(latest_path.relative_to(ARTIFACT_ROOT))
+    return payload
+
+
 class ClientConfig(BaseModel):
     hospital_name: str
     data_file: str
@@ -235,6 +248,7 @@ def collect_run_details(run_name: str) -> dict[str, Any]:
         "server_summary": read_json(server_dir / "summary.json"),
         "fit_rounds": fit_rows,
         "evaluation_rounds": eval_rows,
+        "latest_update_audit": collect_latest_update_audit(server_dir),
         "clients": client_summaries,
     }
 
