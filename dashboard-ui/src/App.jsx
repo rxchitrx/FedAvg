@@ -10,14 +10,6 @@ import {
   YAxis,
 } from "recharts";
 
-const navItems = [
-  { id: "setup", label: "Setup" },
-  { id: "live-run", label: "Live Run" },
-  { id: "clients", label: "Clients" },
-  { id: "results", label: "Results" },
-  { id: "saved-runs", label: "Saved Runs" },
-];
-
 const defaultConfig = {
   run_name: "fedavg_demo",
   server_address: "0.0.0.0:8080",
@@ -81,7 +73,6 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [selectedRun, setSelectedRun] = useState("");
-  const [activeSection, setActiveSection] = useState("setup");
 
   const fetchDashboard = async () => {
     const response = await fetch("/api/dashboard");
@@ -311,7 +302,6 @@ function App() {
       }
       await fetchDashboard();
       setSelectedRun(config.run_name);
-      setActiveSection("live-run");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -346,46 +336,17 @@ function App() {
     }));
   };
 
-  const jumpToSection = (sectionId) => {
-    setActiveSection(sectionId);
-    const element = document.getElementById(sectionId);
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  };
-
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand-block">
-          <div className="brand-mark">FA</div>
-          <div>
-            <h1>FedAvg Control Center</h1>
-            <p>Simple federated learning demo console</p>
-          </div>
-        </div>
-        <nav className="sidebar-nav">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              className={`nav-item ${activeSection === item.id ? "active" : ""}`}
-              onClick={() => jumpToSection(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-footer">
-          <span className="eyebrow">Current run</span>
-          <strong>{activeRunName}</strong>
-        </div>
-      </aside>
-
       <main className="main-panel">
         <header className="topbar card">
-          <div>
-            <span className="eyebrow">Standard FedAvg</span>
-            <h2>{activeRunName}</h2>
+          <div className="topbar-title">
+            <div className="brand-mark">FA</div>
+            <div>
+              <span className="eyebrow">Standard FedAvg</span>
+              <h2>{activeRunName}</h2>
+              <p>Simple federated learning demo console</p>
+            </div>
           </div>
           <div className="topbar-controls">
             <button className="primary-button" onClick={startRun} disabled={busy}>
@@ -778,7 +739,6 @@ function App() {
                 className={`saved-run-card ${selectedRun === run.run_name ? "selected" : ""}`}
                 onClick={() => {
                   setSelectedRun(run.run_name);
-                  setActiveSection("results");
                 }}
               >
                 <strong>{run.run_name}</strong>

@@ -37,18 +37,7 @@ select {
 
 .app-shell {
   min-height: 100vh;
-  display: grid;
-  grid-template-columns: 280px 1fr;
-}
-
-.sidebar {
-  padding: 28px 22px;
-  border-right: 1px solid rgba(216, 226, 232, 0.9);
-  background: rgba(255, 255, 255, 0.86);
-  backdrop-filter: blur(14px);
-  display: flex;
-  flex-direction: column;
-  gap: 28px;
+  width: 100%;
 }
 
 .brand-block {
@@ -76,39 +65,11 @@ select {
 }
 
 .brand-block p,
-.sidebar-footer,
+.topbar-title p,
 .process-row p {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 0.92rem;
-}
-
-.sidebar-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.nav-item {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  border-radius: 14px;
-  padding: 14px 16px;
-  text-align: left;
-}
-
-.nav-item.active,
-.nav-item:hover {
-  background: rgba(25, 94, 119, 0.1);
-  color: var(--ink);
-}
-
-.sidebar-footer {
-  margin-top: auto;
-  padding: 18px;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, rgba(15, 140, 134, 0.08), rgba(25, 94, 119, 0.06));
 }
 
 .main-panel {
@@ -116,6 +77,8 @@ select {
   display: flex;
   flex-direction: column;
   gap: 22px;
+  width: min(1520px, 100%);
+  margin: 0 auto;
 }
 
 .section-block {
@@ -144,6 +107,12 @@ select {
   justify-content: space-between;
   align-items: center;
   gap: 18px;
+}
+
+.topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
 .topbar-controls {
@@ -833,15 +802,6 @@ th {
 }
 
 @media (max-width: 1200px) {
-  .app-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .sidebar {
-    border-right: 0;
-    border-bottom: 1px solid rgba(216, 226, 232, 0.9);
-  }
-
   .grid-two,
   .content-grid,
   .client-chart-grid,
