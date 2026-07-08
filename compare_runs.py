@@ -41,14 +41,8 @@ def collect_run_summaries() -> List[Dict[str, object]]:
                 "final_eval_round": final_eval.get("round"),
                 "final_eval_loss": final_eval.get("loss"),
                 "final_eval_accuracy": final_eval.get("accuracy"),
-                "final_eval_precision": final_eval.get("precision"),
-                "final_eval_recall": final_eval.get("recall"),
-                "final_eval_specificity": final_eval.get("specificity"),
-                "final_eval_f1_score": final_eval.get("f1_score"),
-                "poisoned_updates_seen": final_fit.get("client_behavior_poisoned"),
-                "accepted_client_count": final_fit.get("accepted_client_count"),
-                "rejected_client_count": final_fit.get("rejected_client_count"),
-                "detection_enabled": final_fit.get("detection_enabled"),
+                "final_train_accuracy": final_fit.get("train_accuracy"),
+                "received_client_updates": final_fit.get("received_client_updates"),
             }
         )
 
@@ -79,12 +73,10 @@ def print_table(rows: List[Dict[str, object]]) -> None:
     headers = [
         "run_name",
         "aggregation_strategy",
+        "num_rounds",
         "final_eval_accuracy",
-        "final_eval_recall",
-        "final_eval_f1_score",
-        "poisoned_updates_seen",
-        "accepted_client_count",
-        "rejected_client_count",
+        "final_eval_loss",
+        "received_client_updates",
     ]
     widths = {header: max(len(header), *(len(str(row.get(header, ""))) for row in rows)) for header in headers}
     print(" | ".join(header.ljust(widths[header]) for header in headers))

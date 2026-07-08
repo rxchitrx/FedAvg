@@ -63,25 +63,9 @@ def should_keep_log_line(line: str) -> bool:
     return not any(fragment in line for fragment in noisy_fragments)
 
 
-def collect_latest_update_audit(server_dir: Path) -> dict[str, Any]:
-    audit_dir = server_dir / "update_audits"
-    if not audit_dir.exists():
-        return {}
-    audit_paths = sorted(audit_dir.glob("round_*_update_audit.json"))
-    if not audit_paths:
-        return {}
-    latest_path = audit_paths[-1]
-    payload = read_json(latest_path)
-    payload["artifact_path"] = str(latest_path.relative_to(ARTIFACT_ROOT))
-    return payload
-
-
 class ClientConfig(BaseModel):
     hospital_name: str
     data_file: str
-    behavior: str = "honest"
-    attack_mode: str = "sign_flip"
-    attack_strength: float = 4.0
     enabled: bool = True
 
 
@@ -90,7 +74,6 @@ class RunConfig(BaseModel):
     server_address: str = "127.0.0.1:8080"
     num_rounds: int = 5
     local_epochs: int = 2
-    aggregation_strategy: str = "fedavg"
     batch_size: int = 32
     learning_rate: float = 0.01
     momentum: float = 0.9
@@ -189,8 +172,7 @@ class RunController:
             }
         )
 
-        server_env = common_env | {"AGGREGATION_STRATEGY": config.aggregation_strategy}
-        server = ManagedProcess("server", [sys.executable, "server.py"], server_env)
+        server = ManagedProcess("server", [sys.executable, "server.py"], common_env)
         server.start()
         self.processes = {"server": server}
 
@@ -203,9 +185,6 @@ class RunController:
                 "BATCH_SIZE": str(config.batch_size),
                 "LEARNING_RATE": str(config.learning_rate),
                 "MOMENTUM": str(config.momentum),
-                "CLIENT_BEHAVIOR": client.behavior,
-                "ATTACK_MODE": client.attack_mode,
-                "ATTACK_STRENGTH": str(client.attack_strength),
             }
             name = f"client_{idx + 1}"
             proc = ManagedProcess(name, [sys.executable, "client.py"], client_env)
@@ -248,7 +227,6 @@ def collect_run_details(run_name: str) -> dict[str, Any]:
         "server_summary": read_json(server_dir / "summary.json"),
         "fit_rounds": fit_rows,
         "evaluation_rounds": eval_rows,
-        "latest_update_audit": collect_latest_update_audit(server_dir),
         "clients": client_summaries,
     }
 

@@ -4,7 +4,6 @@ import {
   Legend,
   Line,
   LineChart,
-  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -12,20 +11,18 @@ import {
 } from "recharts";
 
 const navItems = [
-  { id: "experiments", label: "Experiments" },
+  { id: "setup", label: "Setup" },
   { id: "live-run", label: "Live Run" },
   { id: "clients", label: "Clients" },
-  { id: "comparisons", label: "Comparisons" },
-  { id: "artifacts", label: "Artifacts" },
-  { id: "settings", label: "Settings" },
+  { id: "results", label: "Results" },
+  { id: "saved-runs", label: "Saved Runs" },
 ];
 
 const defaultConfig = {
-  run_name: "dashboard_demo",
-  server_address: "127.0.0.1:8080",
+  run_name: "fedavg_demo",
+  server_address: "0.0.0.0:8080",
   num_rounds: 5,
   local_epochs: 2,
-  aggregation_strategy: "fedavg",
   batch_size: 32,
   learning_rate: 0.01,
   momentum: 0.9,
@@ -33,58 +30,14 @@ const defaultConfig = {
     {
       hospital_name: "Hospital_A",
       data_file: "hospital_A_data.npz",
-      behavior: "honest",
-      attack_mode: "sign_flip",
-      attack_strength: 4,
       enabled: true,
     },
     {
       hospital_name: "Hospital_B",
       data_file: "hospital_B_data.npz",
-      behavior: "honest",
-      attack_mode: "sign_flip",
-      attack_strength: 4,
       enabled: true,
     },
-    {
-      hospital_name: "Hospital_C",
-      data_file: "hospital_B_data.npz",
-      behavior: "honest",
-      attack_mode: "sign_flip",
-      attack_strength: 4,
-      enabled: false,
-    },
   ],
-};
-
-const presets = {
-  clean: {
-    run_name: "baseline_clean_fedavg",
-    aggregation_strategy: "fedavg",
-    clients: [
-      { hospital_name: "Hospital_A", data_file: "hospital_A_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
-      { hospital_name: "Hospital_B", data_file: "hospital_B_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
-      { hospital_name: "Hospital_C", data_file: "hospital_B_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: false },
-    ],
-  },
-  attack: {
-    run_name: "attack_fedavg",
-    aggregation_strategy: "fedavg",
-    clients: [
-      { hospital_name: "Hospital_A", data_file: "hospital_A_data.npz", behavior: "poisoned", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
-      { hospital_name: "Hospital_B", data_file: "hospital_B_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
-      { hospital_name: "Hospital_C", data_file: "hospital_B_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: false },
-    ],
-  },
-  defense: {
-    run_name: "novelty_detect_median",
-    aggregation_strategy: "detect_median",
-    clients: [
-      { hospital_name: "Hospital_A", data_file: "hospital_A_data.npz", behavior: "poisoned", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
-      { hospital_name: "Hospital_B", data_file: "hospital_B_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
-      { hospital_name: "Hospital_C", data_file: "hospital_B_data.npz", behavior: "honest", attack_mode: "sign_flip", attack_strength: 4, enabled: true },
-    ],
-  },
 };
 
 function toNumber(value) {
@@ -103,13 +56,6 @@ function formatInteger(value) {
   return number === null ? "--" : Math.round(number).toLocaleString();
 }
 
-function formatStrategyName(strategy) {
-  if (strategy === "detect_median") return "Detect + median";
-  if (strategy === "fedavg") return "FedAvg";
-  if (strategy === "median") return "Median only";
-  return strategy || "--";
-}
-
 function badgeClass(state) {
   return `badge badge-${state || "idle"}`;
 }
@@ -118,7 +64,7 @@ function getLatestByPhase(roundHistory, phase) {
   return [...(roundHistory || [])].reverse().find((entry) => entry.phase === phase) || null;
 }
 
-function buildMetricList(items) {
+function metricChips(items) {
   return items.filter((item) => item.value !== undefined && item.value !== null && item.value !== "" && item.value !== "--");
 }
 
@@ -135,8 +81,7 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [selectedRun, setSelectedRun] = useState("");
-  const [activeSection, setActiveSection] = useState("experiments");
-  const [chartMetric, setChartMetric] = useState("accuracy");
+  const [activeSection, setActiveSection] = useState("setup");
 
   const fetchDashboard = async () => {
     const response = await fetch("/api/dashboard");
@@ -172,77 +117,9 @@ function App() {
   }, [selectedRun, dashboard.current_run_name]);
 
   const displayedRun = selectedRunData || dashboard.current_run || {};
-
-  const chartData = useMemo(() => {
-    const fitRounds = displayedRun.fit_rounds || [];
-    const evalRounds = displayedRun.evaluation_rounds || [];
-    const latestFitByRound = new Map();
-    const latestEvalByRound = new Map();
-
-    fitRounds.forEach((row) => {
-      const round = toNumber(row.round);
-      if (round !== null) latestFitByRound.set(round, row);
-    });
-    evalRounds.forEach((row) => {
-      const round = toNumber(row.round);
-      if (round !== null) latestEvalByRound.set(round, row);
-    });
-
-    return Array.from(latestFitByRound.keys())
-      .sort((a, b) => a - b)
-      .map((round) => {
-        const fitRow = latestFitByRound.get(round) || {};
-        const evalRow = latestEvalByRound.get(round) || {};
-        return {
-          round,
-          local_accuracy: toNumber(fitRow.local_test_accuracy ?? fitRow.val_accuracy),
-          local_recall: toNumber(fitRow.local_test_recall ?? fitRow.val_recall),
-          local_f1_score: toNumber(fitRow.local_test_f1_score ?? fitRow.val_f1_score),
-          global_accuracy: toNumber(evalRow.accuracy),
-          global_recall: toNumber(evalRow.recall),
-          global_f1_score: toNumber(evalRow.f1_score),
-        };
-      });
-  }, [displayedRun]);
-
-  const chartConfig = {
-    accuracy: {
-      title: "Accuracy by round",
-      localKey: "local_accuracy",
-      globalKey: "global_accuracy",
-      localLabel: "Local test accuracy",
-      globalLabel: "Global test accuracy",
-    },
-    recall: {
-      title: "Recall by round",
-      localKey: "local_recall",
-      globalKey: "global_recall",
-      localLabel: "Local test recall",
-      globalLabel: "Global test recall",
-    },
-    f1_score: {
-      title: "F1 by round",
-      localKey: "local_f1_score",
-      globalKey: "global_f1_score",
-      localLabel: "Local test F1",
-      globalLabel: "Global test F1",
-    },
-  };
-
-  const liveTimeline = useMemo(() => {
-    const processes = dashboard.processes || {};
-    const server = processes.server;
-    const clients = Object.values(processes).filter((proc) => proc.name !== "server");
-    const displayedEvaluationRounds = displayedRun.evaluation_rounds || [];
-    const displayedFitRounds = displayedRun.fit_rounds || [];
-    return [
-      { label: "Server boot", complete: server?.state === "running" || server?.state === "finished" },
-      { label: "Clients connected", complete: clients.length >= 2 || displayedFitRounds.length > 0 },
-      { label: "Training active", complete: clients.some((proc) => proc.state === "running") || displayedFitRounds.length > 0 },
-      { label: "Aggregation", complete: displayedFitRounds.length > 0 },
-      { label: "Evaluation", complete: displayedEvaluationRounds.length > 0 },
-    ];
-  }, [dashboard.processes, displayedRun]);
+  const processLogs = dashboard.processes || {};
+  const activeRunName = selectedRun || dashboard.current_run_name || config.run_name;
+  const enabledClients = config.clients.filter((client) => client.enabled);
 
   const clientCards = useMemo(() => {
     return (displayedRun.clients || []).map((client) => {
@@ -264,265 +141,123 @@ function App() {
     };
   }, [displayedRun]);
 
-  const processLogs = dashboard.processes || {};
-  const selectedRunInterpretation = useMemo(() => {
-    const strategy = globalSummary.metadata.aggregation_strategy || "unknown";
-    const poisoned = clientCards.filter((client) => client.summary?.metadata?.client_behavior === "poisoned");
-    const clientCount = clientCards.length;
-    const finalF1 = toNumber(globalSummary.finalEvaluate?.f1_score);
+  const chartData = useMemo(() => {
+    const fitByRound = new Map();
+    const evalByRound = new Map();
+    (displayedRun.fit_rounds || []).forEach((row) => {
+      const round = toNumber(row.round);
+      if (round !== null) fitByRound.set(round, row);
+    });
+    (displayedRun.evaluation_rounds || []).forEach((row) => {
+      const round = toNumber(row.round);
+      if (round !== null) evalByRound.set(round, row);
+    });
 
-    if (strategy === "fedavg" && poisoned.length > 0) {
-      return {
-        tone: "danger",
-        title: "This selected run is an attack demo.",
-        body:
-          "A poisoned hospital trained locally, then sent a manipulated update to the server. FedAvg averages that poisoned update with the honest one, so a global accuracy/recall/F1 collapse is expected.",
-      };
-    }
-
-    if (strategy === "median" && poisoned.length > 0 && clientCount < 3) {
-      return {
-        tone: "danger",
-        title: "Median is underpowered in this run.",
-        body:
-          "Median needs an honest majority. With only two clients and one poisoned client, the median defense is not strong enough to prove robustness.",
-      };
-    }
-
-    if (strategy === "median" && poisoned.length > 0) {
-      return {
-        tone: finalF1 !== null && finalF1 > 0.65 ? "success" : "warning",
-        title: "This selected run is the robust-defense demo.",
-        body:
-          "Median compares client updates coordinate by coordinate. With one poisoned client and multiple honest clients, the honest majority should limit how much the attacker can drag the global model.",
-      };
-    }
-
-    if (strategy === "detect_median" && poisoned.length > 0 && clientCount < 3) {
-      return {
-        tone: "danger",
-        title: "Detection needs an honest majority here.",
-        body:
-          "The novelty strategy should run with at least three clients: one poisoned and two honest. With only two clients, the detector cannot reliably know which update is the outlier.",
-      };
-    }
-
-    if (strategy === "detect_median" && poisoned.length > 0) {
-      return {
-        tone: "success",
-        title: "This selected run is the full novelty demo.",
-        body:
-          "The server detects suspicious client updates, excludes rejected updates from aggregation, then computes the median over the accepted client updates.",
-      };
-    }
-
-    if (clientCount > 0) {
-      return {
-        tone: "success",
-        title: "This selected run is the clean baseline.",
-        body:
-          "All recorded hospitals are honest, so this run is the baseline you compare against the poisoned FedAvg attack and median-defense runs.",
-      };
-    }
-
-    return {
-      tone: "neutral",
-      title: "No completed run selected yet.",
-      body: "Start a run or select a saved run to see the model behavior explained here.",
-    };
-  }, [clientCards, globalSummary]);
-
-  const enabledClients = config.clients.filter((client) => client.enabled);
-  const poisonedClients = enabledClients.filter((client) => client.behavior === "poisoned");
-  const isFedAvgAttack = config.aggregation_strategy === "fedavg" && poisonedClients.length > 0;
-  const isMedianUnderpowered =
-    config.aggregation_strategy === "median" && poisonedClients.length > 0 && enabledClients.length < 3;
-  const isMedianDefense =
-    config.aggregation_strategy === "median" && poisonedClients.length > 0 && enabledClients.length >= 3;
-  const isNoveltyDefense =
-    config.aggregation_strategy === "detect_median" && poisonedClients.length > 0 && enabledClients.length >= 3;
-  const isNoveltyUnderpowered =
-    config.aggregation_strategy === "detect_median" && poisonedClients.length > 0 && enabledClients.length < 3;
-  const scenarioReadout = useMemo(() => {
-    if (isFedAvgAttack) {
-      return {
-        tone: "danger",
-        title: "Attack demo: poisoned update is expected to damage the global model.",
-      };
-    }
-    if (isMedianUnderpowered) {
-      return {
-        tone: "danger",
-        title: "Median warning: median needs at least 3 clients to be useful against 1 poisoned client.",
-      };
-    }
-    if (isNoveltyUnderpowered) {
-      return {
-        tone: "danger",
-        title: "Novelty warning: detection needs at least 3 clients so there is an honest majority.",
-      };
-    }
-    if (isNoveltyDefense) {
-      return {
-        tone: "success",
-        title: "Novelty demo: detect the poisoned update, reject it, then median-aggregate trusted updates.",
-      };
-    }
-    if (isMedianDefense) {
-      return {
-        tone: "success",
-        title: "Defense demo: median has a majority of honest clients to compare against the poisoned update.",
-      };
-    }
-    return {
-      tone: "",
-      title: "Clean demo: all enabled clients are honest.",
-    };
-  }, [isFedAvgAttack, isMedianDefense, isMedianUnderpowered, isNoveltyDefense, isNoveltyUnderpowered]);
-
-  const presentableLog = useMemo(() => {
-    const latestAudit = displayedRun.latest_update_audit || {};
-    const auditClients = latestAudit.clients || [];
-    const clientByName = new Map(clientCards.map((client) => [client.name, client]));
-    const configuredClients = enabledClients.map((client) => ({
-      hospital_name: client.hospital_name,
-      client_behavior: client.behavior,
-      data_file: client.data_file,
+    const rounds = Array.from(new Set([...fitByRound.keys(), ...evalByRound.keys()])).sort((a, b) => a - b);
+    return rounds.map((round) => ({
+      round,
+      train_accuracy: toNumber(fitByRound.get(round)?.train_accuracy),
+      global_accuracy: toNumber(evalByRound.get(round)?.accuracy),
     }));
-    const visibleClients = auditClients.length ? auditClients : configuredClients;
-    const strategy = globalSummary.metadata.aggregation_strategy || config.aggregation_strategy;
-    const finalEval = globalSummary.finalEvaluate || {};
+  }, [displayedRun]);
+
+  const liveTimeline = useMemo(() => {
+    const server = processLogs.server;
+    const clients = Object.values(processLogs).filter((process) => process.name !== "server");
+    const fitRounds = displayedRun.fit_rounds || [];
+    const evalRounds = displayedRun.evaluation_rounds || [];
+    return [
+      { label: "Server listening", complete: server?.state === "running" || server?.state === "finished" },
+      { label: "Clients connected", complete: clients.length >= enabledClients.length || fitRounds.length > 0 },
+      { label: "Local training", complete: fitRounds.length > 0 },
+      { label: "FedAvg aggregation", complete: fitRounds.length > 0 },
+      { label: "Global evaluation", complete: evalRounds.length > 0 },
+    ];
+  }, [displayedRun, enabledClients.length, processLogs]);
+
+  const presentationLog = useMemo(() => {
+    const fitRounds = displayedRun.fit_rounds || [];
+    const evalRounds = displayedRun.evaluation_rounds || [];
     const finalFit = globalSummary.finalFit || {};
-    const serverProcess = processLogs.server;
-    const clientProcesses = Object.values(processLogs).filter((process) => process.name !== "server");
+    const finalEval = globalSummary.finalEvaluate || {};
+    const serverAddress = globalSummary.metadata.server_address || config.server_address;
+    const connectedClients = clientCards.length ? clientCards : enabledClients.map((client) => ({ name: client.hospital_name, summary: { metadata: client } }));
 
     const events = [
       {
         tone: "info",
-        label: "Run started",
-        title: "Federated learning network initialized",
-        body: `1 server is coordinating ${visibleClients.length || enabledClients.length} client(s): ${
-          (visibleClients.length ? visibleClients : enabledClients)
-            .map((client) => `${client.hospital_name || client.name} (${client.client_behavior || client.behavior || "unknown"})`)
-            .join(", ") || "waiting for clients"
-        }.`,
-        metrics: buildMetricList([
-          { label: "Server", value: serverProcess?.state || "ready" },
-          { label: "Client processes", value: clientProcesses.length || visibleClients.length || enabledClients.length },
-          { label: "Strategy", value: formatStrategyName(strategy) },
+        label: "Network",
+        title: "FedAvg network initialized",
+        body: `The server listens on ${serverAddress}. Other devices can connect their clients to this IP and port.`,
+        metrics: metricChips([
+          { label: "Server", value: processLogs.server?.state || "ready" },
+          { label: "Clients expected", value: connectedClients.length },
+          { label: "Strategy", value: "FedAvg" },
           { label: "Rounds", value: globalSummary.metadata.num_rounds || config.num_rounds },
-          { label: "Local epochs", value: globalSummary.metadata.local_epochs || config.local_epochs },
         ]),
       },
     ];
 
-    if (auditClients.length) {
-      auditClients.forEach((client) => {
-        const matchedClient = clientByName.get(client.hospital_name);
-        const latestFit = matchedClient?.latestFit || {};
-        const summary = client.parameter_summary || {};
-        const overall = summary.overall || {};
-        const previewValues = overall.preview_values || [];
-        events.push({
-          tone: client.aggregation_decision === "rejected" ? "danger" : "success",
-          label: client.client_behavior === "poisoned" ? "Poisoned client" : "Client trained",
-          title: `${client.hospital_name || client.client_id} finished local training and sent parameters`,
-          body: `${client.hospital_name || "Client"} trained on ${formatInteger(client.num_examples)} examples, then sent ${formatInteger(summary.scalar_count)} scalar values across ${formatInteger(summary.tensor_count)} tensors to the server.`,
-          metrics: buildMetricList([
-            { label: "Behavior", value: client.client_behavior || "unknown" },
-            { label: "Decision", value: client.aggregation_decision || "pending" },
-            { label: "Train accuracy", value: formatMetric(latestFit.train_accuracy) },
-            { label: "Train F1", value: formatMetric(latestFit.train_f1_score) },
-            { label: "Local test accuracy", value: formatMetric(latestFit.local_test_accuracy ?? latestFit.val_accuracy) },
-            { label: "Local test F1", value: formatMetric(latestFit.local_test_f1_score ?? latestFit.val_f1_score) },
-            { label: "L2 norm", value: formatMetric(overall.l2_norm, 4) },
-            { label: "Mean", value: formatMetric(overall.mean, 6) },
-            { label: "Std", value: formatMetric(overall.std, 6) },
-            { label: "Preview", value: previewValues.slice(0, 4).map((value) => formatMetric(value, 4)).join(", ") },
-          ]),
-        });
-      });
-    } else {
+    connectedClients.forEach((client) => {
+      const latestFit = client.latestFit || {};
+      const metadata = client.summary?.metadata || {};
       events.push({
-        tone: "pending",
-        label: "Client training",
-        title: "Waiting for client update audit",
-        body: "As soon as clients finish local training, this panel will show each hospital's metrics and parameter summary.",
-        metrics: buildMetricList(
-          enabledClients.map((client) => ({
-            label: client.hospital_name,
-            value: client.behavior,
-          }))
-        ),
+        tone: latestFit.train_accuracy ? "success" : "pending",
+        label: "Client update",
+        title: `${client.name || metadata.hospital_name} trains locally and sends parameters`,
+        body: latestFit.train_accuracy
+          ? `${client.name || metadata.hospital_name} trained on its local shard and sent model weights to the server for FedAvg.`
+          : `${client.name || metadata.hospital_name} is configured with ${metadata.data_file || client.data_file || "a local dataset shard"}. Waiting for its first update.`,
+        metrics: metricChips([
+          { label: "Data file", value: metadata.data_file || client.data_file },
+          { label: "Train accuracy", value: formatMetric(latestFit.train_accuracy) },
+          { label: "Train loss", value: formatMetric(latestFit.train_loss) },
+          { label: "Tensors sent", value: formatInteger(latestFit.tensor_count) },
+          { label: "Scalars sent", value: formatInteger(latestFit.scalar_count) },
+        ]),
       });
-    }
+    });
 
-    if (latestAudit.round) {
-      const aggregated = latestAudit.aggregated_parameter_summary || {};
-      const overall = aggregated.overall || {};
-      const action =
-        strategy === "detect_median"
-          ? "The server inspected incoming updates, rejected suspicious outliers, then computed a coordinate-wise median over accepted updates."
-          : strategy === "median"
-            ? "The server computed a coordinate-wise median across the received client updates."
-            : "The server computed a weighted average across the received client updates.";
+    if (fitRounds.length) {
       events.push({
-        tone: toNumber(latestAudit.rejected_client_count) > 0 ? "warning" : "info",
-        label: "Server aggregation",
-        title: "Server received client parameters and produced the global model",
-        body: action,
-        metrics: buildMetricList([
-          { label: "Received updates", value: auditClients.length },
-          { label: "Accepted", value: latestAudit.accepted_client_count },
-          { label: "Rejected", value: latestAudit.rejected_client_count },
-          { label: "Global tensors", value: aggregated.tensor_count },
-          { label: "Global scalars", value: formatInteger(aggregated.scalar_count) },
-          { label: "Global L2 norm", value: formatMetric(overall.l2_norm, 4) },
-          { label: "Global mean", value: formatMetric(overall.mean, 6) },
-          { label: "Global std", value: formatMetric(overall.std, 6) },
+        tone: "info",
+        label: "Server",
+        title: "Server receives client updates and applies FedAvg",
+        body: "The server computes a weighted average of the client model parameters, using each client's number of training examples.",
+        metrics: metricChips([
+          { label: "Latest round", value: finalFit.round },
+          { label: "Client updates", value: finalFit.received_client_updates },
+          { label: "Aggregated train acc", value: formatMetric(finalFit.train_accuracy) },
+          { label: "Aggregation", value: "FedAvg" },
         ]),
       });
     }
 
-    if (finalEval && Object.keys(finalEval).length) {
+    if (evalRounds.length) {
       events.push({
         tone: "success",
-        label: "Final model",
-        title: "Final global model evaluation",
-        body: "After aggregation, the global model was sent back to the clients and evaluated on their test splits.",
-        metrics: buildMetricList([
-          { label: "Accuracy", value: formatMetric(finalEval.accuracy) },
-          { label: "Precision", value: formatMetric(finalEval.precision) },
-          { label: "Recall", value: formatMetric(finalEval.recall) },
-          { label: "Specificity", value: formatMetric(finalEval.specificity) },
-          { label: "F1", value: formatMetric(finalEval.f1_score) },
-          { label: "Loss", value: formatMetric(finalEval.loss) },
-          { label: "Accepted updates", value: formatMetric(finalFit.accepted_client_count, 0) },
-          { label: "Rejected updates", value: formatMetric(finalFit.rejected_client_count, 0) },
+        label: "Global model",
+        title: "Final global model is evaluated by clients",
+        body: "After FedAvg, the server sends the global model back to the clients and aggregates their evaluation metrics.",
+        metrics: metricChips([
+          { label: "Final accuracy", value: formatMetric(finalEval.accuracy) },
+          { label: "Final loss", value: formatMetric(finalEval.loss) },
+          { label: "Final round", value: finalEval.round },
+          { label: "Evaluating clients", value: finalEval.client_count },
         ]),
       });
     } else {
       events.push({
         tone: "pending",
-        label: "Final model",
-        title: "Waiting for global model evaluation",
-        body: "Final model metrics will appear here after the server completes aggregation and evaluation.",
+        label: "Global model",
+        title: "Waiting for global evaluation",
+        body: "Final global accuracy and loss will appear after the first federated evaluation round completes.",
         metrics: [],
       });
     }
 
     return events;
   }, [clientCards, config, displayedRun, enabledClients, globalSummary, processLogs]);
-
-  const applyPreset = (presetName) => {
-    const preset = presets[presetName];
-    setConfig((current) => ({
-      ...current,
-      run_name: preset.run_name,
-      aggregation_strategy: preset.aggregation_strategy,
-      clients: preset.clients,
-    }));
-  };
 
   const startRun = async () => {
     setBusy(true);
@@ -566,12 +301,12 @@ function App() {
   };
 
   const updateClient = (index, field, value) => {
-    setConfig((current) => {
-      const clients = current.clients.map((client, clientIndex) =>
+    setConfig((current) => ({
+      ...current,
+      clients: current.clients.map((client, clientIndex) =>
         clientIndex === index ? { ...client, [field]: value } : client
-      );
-      return { ...current, clients };
-    });
+      ),
+    }));
   };
 
   const jumpToSection = (sectionId) => {
@@ -582,8 +317,6 @@ function App() {
     }
   };
 
-  const activeRunName = selectedRun || dashboard.current_run_name;
-
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -591,7 +324,7 @@ function App() {
           <div className="brand-mark">FA</div>
           <div>
             <h1>FedAvg Control Center</h1>
-            <p>Evaluator-ready federated learning console</p>
+            <p>Simple federated learning demo console</p>
           </div>
         </div>
         <nav className="sidebar-nav">
@@ -607,30 +340,17 @@ function App() {
         </nav>
         <div className="sidebar-footer">
           <span className="eyebrow">Current run</span>
-          <strong>{activeRunName || "No run selected"}</strong>
+          <strong>{activeRunName}</strong>
         </div>
       </aside>
 
       <main className="main-panel">
         <header className="topbar card">
           <div>
-            <span className="eyebrow">Experiment control</span>
-            <h2>{activeRunName || config.run_name}</h2>
+            <span className="eyebrow">Standard FedAvg</span>
+            <h2>{activeRunName}</h2>
           </div>
           <div className="topbar-controls">
-            <div className="inline-field">
-              <label>Strategy</label>
-              <select
-                value={config.aggregation_strategy}
-                onChange={(event) =>
-                  setConfig((current) => ({ ...current, aggregation_strategy: event.target.value }))
-                }
-              >
-                <option value="fedavg">FedAvg</option>
-                <option value="median">Median only</option>
-                <option value="detect_median">Detect + median</option>
-              </select>
-            </div>
             <button className="primary-button" onClick={startRun} disabled={busy}>
               Start run
             </button>
@@ -645,88 +365,42 @@ function App() {
 
         {error ? <div className="error-banner">{error}</div> : null}
 
-        <section id="experiments" className="grid-two section-block">
+        <section id="setup" className="grid-two section-block">
           <div className="card config-card">
             <div className="section-head">
               <div>
                 <span className="eyebrow">Run configuration</span>
-                <h3>Scenario builder</h3>
+                <h3>FedAvg setup</h3>
               </div>
             </div>
-
-            <div className="preset-row">
-              <button type="button" onClick={() => applyPreset("clean")}>Clean FedAvg</button>
-              <button type="button" onClick={() => applyPreset("attack")}>Attack FedAvg</button>
-              <button type="button" onClick={() => applyPreset("defense")}>Novelty: Detect + Median</button>
+            <div className="scenario-readout">
+              <strong>Basic architecture only: 1 server, enabled clients, standard FedAvg.</strong>
+              <span>Use your machine IP in `SERVER_ADDRESS` when clients run from other devices.</span>
             </div>
-
-            <div
-              className={`scenario-readout ${scenarioReadout.tone}`}
-            >
-              <strong>{scenarioReadout.title}</strong>
-              <span>
-                Enabled clients: {enabledClients.length} | Poisoned clients: {poisonedClients.length} | Strategy:{" "}
-                {config.aggregation_strategy}
-              </span>
-            </div>
-
             <div className="form-grid">
               <label>
                 Run name
-                <input
-                  value={config.run_name}
-                  onChange={(event) => setConfig((current) => ({ ...current, run_name: event.target.value }))}
-                />
+                <input value={config.run_name} onChange={(event) => setConfig((current) => ({ ...current, run_name: event.target.value }))} />
               </label>
               <label>
                 Server address
-                <input
-                  value={config.server_address}
-                  onChange={(event) =>
-                    setConfig((current) => ({ ...current, server_address: event.target.value }))
-                  }
-                />
+                <input value={config.server_address} onChange={(event) => setConfig((current) => ({ ...current, server_address: event.target.value }))} />
               </label>
               <label>
                 Rounds
-                <input
-                  type="number"
-                  value={config.num_rounds}
-                  onChange={(event) =>
-                    setConfig((current) => ({ ...current, num_rounds: Number(event.target.value) }))
-                  }
-                />
+                <input type="number" value={config.num_rounds} onChange={(event) => setConfig((current) => ({ ...current, num_rounds: Number(event.target.value) }))} />
               </label>
               <label>
                 Local epochs
-                <input
-                  type="number"
-                  value={config.local_epochs}
-                  onChange={(event) =>
-                    setConfig((current) => ({ ...current, local_epochs: Number(event.target.value) }))
-                  }
-                />
+                <input type="number" value={config.local_epochs} onChange={(event) => setConfig((current) => ({ ...current, local_epochs: Number(event.target.value) }))} />
               </label>
               <label>
                 Batch size
-                <input
-                  type="number"
-                  value={config.batch_size}
-                  onChange={(event) =>
-                    setConfig((current) => ({ ...current, batch_size: Number(event.target.value) }))
-                  }
-                />
+                <input type="number" value={config.batch_size} onChange={(event) => setConfig((current) => ({ ...current, batch_size: Number(event.target.value) }))} />
               </label>
               <label>
                 Learning rate
-                <input
-                  type="number"
-                  step="0.001"
-                  value={config.learning_rate}
-                  onChange={(event) =>
-                    setConfig((current) => ({ ...current, learning_rate: Number(event.target.value) }))
-                  }
-                />
+                <input type="number" step="0.001" value={config.learning_rate} onChange={(event) => setConfig((current) => ({ ...current, learning_rate: Number(event.target.value) }))} />
               </label>
             </div>
 
@@ -744,46 +418,9 @@ function App() {
                       Enabled
                     </label>
                   </div>
-                  <div className="behavior-group">
-                    <span>Behavior</span>
-                    <div className="segmented-control">
-                      <button
-                        type="button"
-                        className={client.behavior === "honest" ? "segment active" : "segment"}
-                        onClick={() => updateClient(index, "behavior", "honest")}
-                      >
-                        Honest
-                      </button>
-                      <button
-                        type="button"
-                        className={client.behavior === "poisoned" ? "segment danger active" : "segment danger"}
-                        onClick={() => updateClient(index, "behavior", "poisoned")}
-                      >
-                        Poisoned
-                      </button>
-                    </div>
-                  </div>
                   <label>
-                    Attack mode
-                    <select
-                      value={client.attack_mode}
-                      disabled={client.behavior !== "poisoned"}
-                      onChange={(event) => updateClient(index, "attack_mode", event.target.value)}
-                    >
-                      <option value="sign_flip">Sign flip</option>
-                      <option value="gaussian_noise">Gaussian noise</option>
-                      <option value="zero_out">Zero out</option>
-                    </select>
-                  </label>
-                  <label>
-                    Attack strength
-                    <input
-                      type="number"
-                      step="0.5"
-                      disabled={client.behavior !== "poisoned"}
-                      value={client.attack_strength}
-                      onChange={(event) => updateClient(index, "attack_strength", Number(event.target.value))}
-                    />
+                    Dataset shard
+                    <input value={client.data_file} onChange={(event) => updateClient(index, "data_file", event.target.value)} />
                   </label>
                 </div>
               ))}
@@ -806,59 +443,38 @@ function App() {
               ))}
             </div>
             <div className="process-list">
-              {Object.values(processLogs).map((process) => (
-                <div key={process.name} className="process-row">
-                  <div>
-                    <strong>{process.name}</strong>
-                    <p>{process.pid ? `PID ${process.pid}` : "Not started"}</p>
+              {Object.values(processLogs).length ? (
+                Object.values(processLogs).map((process) => (
+                  <div key={process.name} className="process-row">
+                    <div>
+                      <strong>{process.name}</strong>
+                      <p>{process.pid ? `PID ${process.pid}` : "Not started"}</p>
+                    </div>
+                    <span className={badgeClass(process.state)}>{process.state}</span>
                   </div>
-                  <span className={badgeClass(process.state)}>{process.state}</span>
-                </div>
-              ))}
+                ))
+              ) : (
+                <div className="empty-state compact">No active local processes yet.</div>
+              )}
             </div>
           </div>
         </section>
 
-        <section className="content-grid section-block">
-          <div id="comparisons" className="card chart-card">
+        <section id="results" className="content-grid section-block">
+          <div className="card chart-card">
             <div className="section-head">
               <div>
                 <span className="eyebrow">Round metrics</span>
-                <h3>{chartConfig[chartMetric].title}</h3>
+                <h3>FedAvg accuracy by round</h3>
               </div>
-              <div className="chart-toolbar">
-                <div className="segmented-control compact">
-                  <button
-                    type="button"
-                    className={chartMetric === "accuracy" ? "segment active" : "segment"}
-                    onClick={() => setChartMetric("accuracy")}
-                  >
-                    Accuracy
-                  </button>
-                  <button
-                    type="button"
-                    className={chartMetric === "recall" ? "segment active" : "segment"}
-                    onClick={() => setChartMetric("recall")}
-                  >
-                    Recall
-                  </button>
-                  <button
-                    type="button"
-                    className={chartMetric === "f1_score" ? "segment active" : "segment"}
-                    onClick={() => setChartMetric("f1_score")}
-                  >
-                    F1
-                  </button>
-                </div>
-                <select value={selectedRun} onChange={(event) => setSelectedRun(event.target.value)}>
-                  <option value="">Current run</option>
-                  {dashboard.available_runs.map((run) => (
-                    <option key={run.run_name} value={run.run_name}>
-                      {run.run_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <select value={selectedRun} onChange={(event) => setSelectedRun(event.target.value)}>
+                <option value="">Current run</option>
+                {dashboard.available_runs.map((run) => (
+                  <option key={run.run_name} value={run.run_name}>
+                    {run.run_name}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="chart-wrap">
               {chartData.length ? (
@@ -869,85 +485,33 @@ function App() {
                     <YAxis stroke="#5f7484" domain={[0, 1]} />
                     <Tooltip />
                     <Legend />
-                    <ReferenceLine y={0.9} stroke="#d8e2e8" strokeDasharray="3 3" />
-                    <Line
-                      type="monotone"
-                      dataKey={chartConfig[chartMetric].localKey}
-                      stroke="#0d9488"
-                      strokeWidth={3}
-                      name={chartConfig[chartMetric].localLabel}
-                      dot={{ r: 4 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey={chartConfig[chartMetric].globalKey}
-                      stroke="#1b5e74"
-                      strokeWidth={3}
-                      name={chartConfig[chartMetric].globalLabel}
-                      dot={{ r: 4 }}
-                    />
+                    <Line type="monotone" dataKey="train_accuracy" stroke="#0d9488" strokeWidth={3} name="Aggregated train accuracy" dot={{ r: 4 }} />
+                    <Line type="monotone" dataKey="global_accuracy" stroke="#1b5e74" strokeWidth={3} name="Global test accuracy" dot={{ r: 4 }} />
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
                 <div className="empty-state">No round data yet for the selected run.</div>
               )}
             </div>
-            <div className="chart-caption">
-              The green line is the hospital-local test score before aggregation. The blue line is the global model score
-              after the server aggregates the client updates. For new runs, both lines use the same client test split.
-            </div>
           </div>
 
-          <div id="artifacts" className="card summary-card">
+          <div className="card summary-card">
             <div className="section-head">
               <div>
                 <span className="eyebrow">Global model</span>
-                <h3>Final aggregated outcome</h3>
+                <h3>Final FedAvg result</h3>
               </div>
             </div>
             <div className="metric-pair-grid">
-              <div>
-                <span>Strategy</span>
-                <strong>{globalSummary.metadata.aggregation_strategy || "--"}</strong>
-              </div>
-              <div>
-                <span>Rounds</span>
-                <strong>{globalSummary.metadata.num_rounds || "--"}</strong>
-              </div>
-              <div>
-                <span>Final global accuracy</span>
-                <strong>{formatMetric(globalSummary.finalEvaluate?.accuracy)}</strong>
-              </div>
-              <div>
-                <span>Final global recall</span>
-                <strong>{formatMetric(globalSummary.finalEvaluate?.recall)}</strong>
-              </div>
-              <div>
-                <span>Final global F1</span>
-                <strong>{formatMetric(globalSummary.finalEvaluate?.f1_score)}</strong>
-              </div>
-              <div>
-                <span>Global loss</span>
-                <strong>{formatMetric(globalSummary.finalEvaluate?.loss)}</strong>
-              </div>
-              <div>
-                <span>Accepted updates</span>
-                <strong>{formatMetric(globalSummary.finalFit?.accepted_client_count, 0)}</strong>
-              </div>
-              <div>
-                <span>Rejected updates</span>
-                <strong>{formatMetric(globalSummary.finalFit?.rejected_client_count, 0)}</strong>
-              </div>
+              <div><span>Strategy</span><strong>FedAvg</strong></div>
+              <div><span>Rounds</span><strong>{globalSummary.metadata.num_rounds || "--"}</strong></div>
+              <div><span>Final accuracy</span><strong>{formatMetric(globalSummary.finalEvaluate?.accuracy)}</strong></div>
+              <div><span>Final loss</span><strong>{formatMetric(globalSummary.finalEvaluate?.loss)}</strong></div>
+              <div><span>Client updates</span><strong>{formatInteger(globalSummary.finalFit?.received_client_updates)}</strong></div>
+              <div><span>Server address</span><strong>{globalSummary.metadata.server_address || config.server_address}</strong></div>
             </div>
             <div className="global-summary-note">
-              <p>
-                Local fit metrics are the hospitals&apos; scores before aggregation. Global metrics are the server-aggregated
-                model after both clients send updates back.
-              </p>
-            </div>
-            <div className={`interpretation-card ${selectedRunInterpretation.tone}`}>
-              <strong>{selectedRunInterpretation.title}</strong>
-              <p>{selectedRunInterpretation.body}</p>
+              <p>Clients train locally on their own dataset shards. The server never sees raw images; it only receives model parameters and applies FedAvg.</p>
             </div>
           </div>
         </section>
@@ -958,58 +522,30 @@ function App() {
               <div key={client.name} className="card client-detail-card">
                 <div className="section-head">
                   <div>
-                    <span className="eyebrow">Hospital view</span>
+                    <span className="eyebrow">Client view</span>
                     <h3>{client.name}</h3>
                   </div>
-                  <span className={badgeClass(client.summary?.metadata?.client_behavior)}>
-                    {client.summary?.metadata?.client_behavior || "unknown"}
-                  </span>
+                  <span className="badge badge-honest">FedAvg client</span>
                 </div>
-
                 <div className="client-comparison-grid">
                   <div className="metric-panel">
-                    <h4>Local model before aggregation</h4>
+                    <h4>Local training update</h4>
                     <div className="mini-metrics">
                       <div><span>Train acc</span><strong>{formatMetric(client.latestFit?.train_accuracy)}</strong></div>
-                      <div><span>Train recall</span><strong>{formatMetric(client.latestFit?.train_recall)}</strong></div>
-                      <div><span>Train F1</span><strong>{formatMetric(client.latestFit?.train_f1_score)}</strong></div>
-                      <div><span>Local test acc</span><strong>{formatMetric(client.latestFit?.local_test_accuracy ?? client.latestFit?.val_accuracy)}</strong></div>
-                      <div><span>Local test recall</span><strong>{formatMetric(client.latestFit?.local_test_recall ?? client.latestFit?.val_recall)}</strong></div>
-                      <div><span>Local test F1</span><strong>{formatMetric(client.latestFit?.local_test_f1_score ?? client.latestFit?.val_f1_score)}</strong></div>
+                      <div><span>Train loss</span><strong>{formatMetric(client.latestFit?.train_loss)}</strong></div>
+                      <div><span>Tensors sent</span><strong>{formatInteger(client.latestFit?.tensor_count)}</strong></div>
+                      <div><span>Scalars sent</span><strong>{formatInteger(client.latestFit?.scalar_count)}</strong></div>
+                      <div><span>Dataset</span><strong>{client.summary?.metadata?.data_file || "--"}</strong></div>
+                      <div><span>Server</span><strong>{client.summary?.metadata?.server_address || "--"}</strong></div>
                     </div>
                   </div>
-
                   <div className="metric-panel">
-                    <h4>Global model after aggregation</h4>
+                    <h4>Global model evaluation</h4>
                     <div className="mini-metrics">
-                      <div><span>Test acc</span><strong>{formatMetric(client.latestEvaluate?.accuracy)}</strong></div>
-                      <div><span>Test recall</span><strong>{formatMetric(client.latestEvaluate?.recall)}</strong></div>
-                      <div><span>Test F1</span><strong>{formatMetric(client.latestEvaluate?.f1_score)}</strong></div>
-                      <div><span>Precision</span><strong>{formatMetric(client.latestEvaluate?.precision)}</strong></div>
-                      <div><span>Specificity</span><strong>{formatMetric(client.latestEvaluate?.specificity)}</strong></div>
+                      <div><span>Accuracy</span><strong>{formatMetric(client.latestEvaluate?.accuracy)}</strong></div>
                       <div><span>Loss</span><strong>{formatMetric(client.latestEvaluate?.loss)}</strong></div>
+                      <div><span>Data file</span><strong>{client.summary?.metadata?.data_file || "--"}</strong></div>
                     </div>
-                  </div>
-                </div>
-
-                <div className="delta-strip">
-                  <div>
-                    <span>Accuracy delta</span>
-                    <strong>{formatMetric((toNumber(client.latestEvaluate?.accuracy) ?? 0) - (toNumber(client.latestFit?.local_test_accuracy ?? client.latestFit?.val_accuracy) ?? 0))}</strong>
-                  </div>
-                  <div>
-                    <span>Recall delta</span>
-                    <strong>{formatMetric((toNumber(client.latestEvaluate?.recall) ?? 0) - (toNumber(client.latestFit?.local_test_recall ?? client.latestFit?.val_recall) ?? 0))}</strong>
-                  </div>
-                  <div>
-                    <span>F1 delta</span>
-                    <strong>{formatMetric((toNumber(client.latestEvaluate?.f1_score) ?? 0) - (toNumber(client.latestFit?.local_test_f1_score ?? client.latestFit?.val_f1_score) ?? 0))}</strong>
-                  </div>
-                  <div>
-                    <span>Confusion matrix</span>
-                    <strong>
-                      TP {Math.round(toNumber(client.latestEvaluate?.tp) ?? 0)} | TN {Math.round(toNumber(client.latestEvaluate?.tn) ?? 0)} | FP {Math.round(toNumber(client.latestEvaluate?.fp) ?? 0)} | FN {Math.round(toNumber(client.latestEvaluate?.fn) ?? 0)}
-                    </strong>
                   </div>
                 </div>
               </div>
@@ -1019,57 +555,45 @@ function App() {
           )}
         </section>
 
-        <section id="comparisons-table" className="grid-two section-block">
+        <section className="grid-two section-block">
           <div className="card comparison-card">
             <div className="section-head">
               <div>
                 <span className="eyebrow">Run comparison</span>
-                <h3>Final outcomes</h3>
+                <h3>Saved FedAvg outcomes</h3>
               </div>
             </div>
             <table>
               <thead>
                 <tr>
                   <th>Run</th>
-                  <th>Strategy</th>
+                  <th>Rounds</th>
                   <th>Accuracy</th>
-                  <th>Recall</th>
-                  <th>F1</th>
-                  <th>Rejected</th>
+                  <th>Loss</th>
                 </tr>
               </thead>
               <tbody>
-                {dashboard.comparisons.map((row) => {
-                  const best = dashboard.comparisons.reduce(
-                    (currentBest, item) =>
-                      (item.final_eval_f1_score ?? -1) > (currentBest.final_eval_f1_score ?? -1) ? item : currentBest,
-                    dashboard.comparisons[0] || {}
-                  );
-                  const isBest = best.run_name === row.run_name;
-                  return (
-                    <tr key={row.run_name} className={isBest ? "best-row" : ""}>
-                      <td>{row.run_name}</td>
-                      <td>{row.aggregation_strategy}</td>
-                      <td>{formatMetric(row.final_eval_accuracy)}</td>
-                      <td>{formatMetric(row.final_eval_recall)}</td>
-                      <td>{formatMetric(row.final_eval_f1_score)}</td>
-                      <td>{formatMetric(row.rejected_client_count, 0)}</td>
-                    </tr>
-                  );
-                })}
+                {dashboard.comparisons.map((row) => (
+                  <tr key={row.run_name}>
+                    <td>{row.run_name}</td>
+                    <td>{row.num_rounds}</td>
+                    <td>{formatMetric(row.final_eval_accuracy)}</td>
+                    <td>{formatMetric(row.final_eval_loss)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
 
-          <div id="live-logs" className="card logs-card presentation-log-card">
+          <div className="card logs-card presentation-log-card">
             <div className="section-head">
               <div>
                 <span className="eyebrow">Presentation log</span>
-                <h3>What happened in this run</h3>
+                <h3>What this run is doing</h3>
               </div>
             </div>
             <div className="presentation-log">
-              {presentableLog.map((event, index) => (
+              {presentationLog.map((event, index) => (
                 <article className={`presentation-event ${event.tone}`} key={`${event.label}-${index}`}>
                   <div className="event-index">{index + 1}</div>
                   <div className="event-body">
@@ -1095,10 +619,10 @@ function App() {
           </div>
         </section>
 
-        <section id="settings" className="card settings-card section-block">
+        <section id="saved-runs" className="card settings-card section-block">
           <div className="section-head">
             <div>
-              <span className="eyebrow">Artifacts and settings</span>
+              <span className="eyebrow">Artifacts</span>
               <h3>Saved runs</h3>
             </div>
           </div>
@@ -1109,14 +633,13 @@ function App() {
                 className={`saved-run-card ${selectedRun === run.run_name ? "selected" : ""}`}
                 onClick={() => {
                   setSelectedRun(run.run_name);
-                  setActiveSection("comparisons");
+                  setActiveSection("results");
                 }}
               >
                 <strong>{run.run_name}</strong>
-                <span>{run.aggregation_strategy}</span>
+                <span>FedAvg</span>
                 <span>Accuracy {formatMetric(run.final_accuracy)}</span>
-                <span>Recall {formatMetric(run.final_recall)}</span>
-                <span>F1 {formatMetric(run.final_f1_score)}</span>
+                <span>Rounds {run.num_rounds}</span>
               </button>
             ))}
           </div>

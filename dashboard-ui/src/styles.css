@@ -423,7 +423,6 @@ select {
   color: #0a6762;
 }
 
-.badge-poisoned,
 .badge-failed {
   background: rgba(201, 74, 56, 0.14);
   color: #9f2f22;

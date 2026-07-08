@@ -1,505 +1,201 @@
 # FedAvg
 
-FedAvg is a compact federated learning project for privacy-preserving pneumonia detection. Two hospital clients train a shared PyTorch model locally on their own chest X-ray partitions, send model updates to a Flower server, and receive an aggregated global model back after each communication round.
+FedAvg is a simple federated learning demo for binary pneumonia detection. One Flower server coordinates multiple hospital clients. Each client trains a small PyTorch CNN on its own local `.npz` dataset shard, sends model parameters to the server, and receives the averaged global model back after each round.
 
-This repository is now set up as an evaluator-ready prototype with:
+This version intentionally keeps the architecture focused:
 
-- project metadata and dependency files
-- verbose client/server logs
-- malicious-client simulation mode
-- switchable `fedavg`, `median`, and `detect_median` aggregation
-- poisoned-update detection with rejected-client exclusion before robust aggregation
-- CSV/JSON artifact logging
-- post-run comparison output for presentation evidence
+- standard FedAvg only
+- clients can connect to the server using an IP address and port
+- the dashboard only visualizes this basic FedAvg workflow
 
-## Evaluator Demo Goal
-
-The intended final-demo story is:
-
-1. show privacy-preserving collaboration across hospitals
-2. show standard FedAvg training in a clean setting
-3. show how a poisoned client can hurt standard averaging
-4. show the novelty path: detect the suspicious client update, exclude it, then aggregate trusted updates with median
-5. compare normal federated learning versus the novelty path through dashboard charts and CSV/JSON outputs
-
-## Repository Layout
+## Project Layout
 
 ```text
 FedAvg/
-├── client.py               # Flower client with verbose local training and attack mode
-├── server.py               # Flower server with FedAvg/median/detect+median strategy selection
-├── compare_runs.py         # Compare completed experiment runs from saved artifacts
-├── hospital_A_data.npz     # Local dataset shard for Hospital A
-├── hospital_B_data.npz     # Local dataset shard for Hospital B
-├── README.md
+├── client.py                  # Flower client: local training + evaluation
+├── server.py                  # Flower server: standard FedAvg
+├── dashboard_api.py           # FastAPI dashboard controller
+├── dashboard-ui/              # React dashboard
+├── compare_runs.py            # Saved-run comparison helper
+├── hospital_A_data.npz        # Hospital A dataset shard
+├── hospital_B_data.npz        # Hospital B dataset shard
 ├── requirements.txt
 ├── requirements-dev.txt
 ├── pyproject.toml
-├── .env.example
-└── .gitignore
+└── .env.example
 ```
 
-## Model Overview
+## Dataset
 
-The project uses a lightweight CNN for binary classification:
-
-- input: grayscale `28x28` chest X-ray image
-- labels:
-  - `0` = Normal
-  - `1` = Pneumonia
-- architecture:
-  - `Conv2d(1 -> 16)` + `ReLU` + `MaxPool`
-  - `Conv2d(16 -> 32)` + `ReLU` + `MaxPool`
-  - `Flatten`
-  - `Linear(32*7*7 -> 64)` + `ReLU`
-  - `Linear(64 -> 2)`
-
-The model is intentionally small so training rounds are fast and easy to demonstrate live.
-
-## Dataset Layout
-
-Each hospital archive contains:
+Each hospital file contains:
 
 - `x_train`, `y_train`
-- `x_val`, `y_val`
 - `x_test`, `y_test`
+- optional validation arrays may exist, but the basic client uses train and test
 
-Observed per-hospital split sizes:
+Current local shards:
 
-- train: `2354`
-- validation: `524`
-- test: `624`
+| File | Train samples | Test samples |
+|---|---:|---:|
+| `hospital_A_data.npz` | 2,354 | 624 |
+| `hospital_B_data.npz` | 2,354 | 624 |
 
-Observed image format:
+Images are `28x28` grayscale. Labels are:
 
-- `28x28`
-- grayscale
-- uint8 in storage, normalized to `[0, 1]` in code
+- `0` = Normal
+- `1` = Pneumonia
 
-## Verbose Logging
+## Model
 
-### Client logs include
+The clients train the same lightweight CNN:
 
-- startup configuration
-- dataset summary
-- current round number
-- per-epoch train metrics
-- per-epoch validation metrics
-- outgoing parameter transmission summary
-- test metrics during server-triggered evaluation
-- warning banner when malicious mode is enabled
+- `Conv2d(1 -> 16)` + ReLU + MaxPool
+- `Conv2d(16 -> 32)` + ReLU + MaxPool
+- flatten
+- `Linear(32*7*7 -> 64)` + ReLU
+- `Linear(64 -> 2)`
 
-### Server logs include
+## Setup
 
-- runtime configuration
-- selected clients per round
-- per-client fit metrics received
-- aggregation strategy used
-- aggregated round summary
-- evaluation request dispatch
-- per-client evaluation results
-- final aggregated evaluation metrics
-
-### Metrics reported
-
-- loss
-- accuracy
-- precision
-- recall
-- specificity
-- F1 score
-- confusion counts: `TP`, `TN`, `FP`, `FN`
-
-## Attack Simulation
-
-Client behavior is configurable with environment variables.
-
-Set a client to honest mode:
-
-```bash
-export CLIENT_BEHAVIOR=honest
-```
-
-Set a client to malicious mode:
-
-```bash
-export CLIENT_BEHAVIOR=poisoned
-```
-
-Supported `ATTACK_MODE` values:
-
-- `sign_flip`
-- `gaussian_noise`
-- `zero_out`
-
-Supported attack settings:
-
-- `ATTACK_MODE`
-- `ATTACK_STRENGTH`
-
-In malicious mode, the client trains normally but tampers with the outgoing update before it is transmitted to the server. That makes the attack visible in both the logs and the final comparison outputs.
-
-## Aggregation Strategies
-
-Set the server aggregation strategy with:
-
-```bash
-export AGGREGATION_STRATEGY=fedavg
-```
-
-or
-
-```bash
-export AGGREGATION_STRATEGY=median
-```
-
-or
-
-```bash
-export AGGREGATION_STRATEGY=detect_median
-```
-
-### `fedavg`
-
-Standard weighted federated averaging.
-
-### `median`
-
-Coordinate-wise median aggregation across client updates. This is a stronger demo baseline against extreme poisoned updates than plain FedAvg.
-
-Important demo note: median only becomes meaningful when honest clients are the majority. With exactly two clients and one poisoned client, the coordinate-wise median is not a strong defense. For the defended demo, run three clients: one poisoned client and two honest clients.
-
-### `detect_median`
-
-The final-project novelty strategy:
-
-1. inspect every received client update
-2. measure each update's distance from the coordinate-wise median update
-3. reject suspicious outlier updates
-4. aggregate only accepted updates with coordinate-wise median
-
-This is the recommended final demo strategy because it directly shows both project novelties: poisoned-update detection and median-based robust aggregation.
-
-## Artifact Logging
-
-Every run writes structured outputs under:
-
-```text
-artifacts/<RUN_NAME>/
-```
-
-### Client artifacts
-
-Each client writes:
-
-- `epoch_metrics.csv`
-- `round_metrics.json`
-- `summary.json`
-
-### Server artifacts
-
-The server writes:
-
-- `fit_rounds.csv`
-- `evaluation_rounds.csv`
-- `summary.json`
-- `update_audits/round_<N>_update_audit.json`
-
-The update audit file shows what each client sent to the server before aggregation:
-
-- Flower client id and hospital name
-- client behavior and attack mode
-- accepted/rejected aggregation decision
-- tensor count and scalar count
-- per-tensor mean, standard deviation, min, max, L2 norm, and preview values
-- aggregated global parameter summary
-
-To print the latest audit for a run:
-
-```bash
-python inspect_update_audit.py update_audit_demo
-```
-
-By default the audit stores summaries, not all 105k+ scalar values. To save the full received tensors as compressed `.npz` files as well:
-
-```bash
-export SAVE_FULL_CLIENT_UPDATES=true
-```
-
-### Run comparison artifacts
-
-After multiple runs:
-
-```bash
-python compare_runs.py
-```
-
-This generates:
-
-- `artifacts/comparisons/run_comparison.json`
-- `artifacts/comparisons/run_comparison.csv`
-
-and prints a simple comparison table in the terminal.
-
-## Configuration
-
-### Shared settings
-
-| Variable | Description | Default |
-|---|---|---|
-| `SERVER_ADDRESS` | Flower server bind/connect address | `127.0.0.1:8080` |
-| `LOCAL_EPOCHS` | Local epochs per federated round | `2` |
-| `RUN_NAME` | Artifact folder name for the current experiment | `default_run` |
-| `ARTIFACT_ROOT` | Root directory for saved outputs | `artifacts` |
-
-### Client settings
-
-| Variable | Description | Default |
-|---|---|---|
-| `HOSPITAL_NAME` | Friendly client label in logs | `Hospital_A` |
-| `DATA_FILE` | Local dataset shard file | `hospital_A_data.npz` |
-| `BATCH_SIZE` | DataLoader batch size | `32` |
-| `LEARNING_RATE` | SGD learning rate | `0.01` |
-| `MOMENTUM` | SGD momentum | `0.9` |
-| `CLIENT_BEHAVIOR` | `honest` or `poisoned` | `honest` |
-| `ATTACK_MODE` | `sign_flip`, `gaussian_noise`, or `zero_out` | `sign_flip` |
-| `ATTACK_STRENGTH` | Attack intensity | `4.0` |
-
-### Server settings
-
-| Variable | Description | Default |
-|---|---|---|
-| `NUM_ROUNDS` | Total federated rounds | `5` |
-| `MIN_AVAILABLE_CLIENTS` | Minimum required clients | `2` |
-| `AGGREGATION_STRATEGY` | `fedavg`, `median`, or `detect_median` | `fedavg` |
-| `DETECTION_Z_THRESHOLD` | Robust z-score cutoff for rejecting suspicious updates | `2.5` |
-| `UPDATE_AUDIT_ENABLED` | Save per-client update summaries before aggregation | `true` |
-| `SAVE_FULL_CLIENT_UPDATES` | Save full received client tensors as `.npz` files | `false` |
-| `UPDATE_AUDIT_PREVIEW_VALUES` | Number of scalar values previewed per tensor | `8` |
-
-See [.env.example](/Users/rachit/Code/AIML_federatedLearning/.env.example:1) for a copyable template.
-
-## Recommended Python Version
-
-Use Python `3.10` to `3.12` if possible for the smoothest PyTorch/Flower compatibility.
-
-## Installation
-
-Create a virtual environment:
+Create and activate a virtual environment:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-Install runtime dependencies:
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Optional development tooling:
-
-```bash
-pip install -r requirements-dev.txt
-```
-
-## Demo Scenarios
-
-### 1. Clean baseline with FedAvg
-
-Server:
-
-```bash
-export SERVER_ADDRESS="127.0.0.1:8080"
-export NUM_ROUNDS=5
-export LOCAL_EPOCHS=2
-export RUN_NAME="baseline_clean_fedavg"
-export AGGREGATION_STRATEGY="fedavg"
-python server.py
-```
-
-Client A:
-
-```bash
-export HOSPITAL_NAME="Hospital_A"
-export DATA_FILE="hospital_A_data.npz"
-export SERVER_ADDRESS="127.0.0.1:8080"
-export LOCAL_EPOCHS=2
-export RUN_NAME="baseline_clean_fedavg"
-export CLIENT_BEHAVIOR="honest"
-python client.py
-```
-
-Client B:
-
-```bash
-export HOSPITAL_NAME="Hospital_B"
-export DATA_FILE="hospital_B_data.npz"
-export SERVER_ADDRESS="127.0.0.1:8080"
-export LOCAL_EPOCHS=2
-export RUN_NAME="baseline_clean_fedavg"
-export CLIENT_BEHAVIOR="honest"
-python client.py
-```
-
-### 2. Attacked baseline with FedAvg
-
-Server:
-
-```bash
-export RUN_NAME="attack_fedavg"
-export AGGREGATION_STRATEGY="fedavg"
-python server.py
-```
-
-Honest client:
-
-```bash
-export HOSPITAL_NAME="Hospital_A"
-export DATA_FILE="hospital_A_data.npz"
-export RUN_NAME="attack_fedavg"
-export CLIENT_BEHAVIOR="honest"
-python client.py
-```
-
-Poisoned client:
-
-```bash
-export HOSPITAL_NAME="Hospital_B"
-export DATA_FILE="hospital_B_data.npz"
-export RUN_NAME="attack_fedavg"
-export CLIENT_BEHAVIOR="poisoned"
-export ATTACK_MODE="sign_flip"
-export ATTACK_STRENGTH="4.0"
-python client.py
-```
-
-### 3. Novelty run with detection + median aggregation
-
-For the dashboard workflow, use the `Novelty: Detect + Median` preset. It enables a third demo client so the detector has two honest updates against one poisoned update.
-
-Server:
-
-```bash
-export RUN_NAME="novelty_detect_median"
-export MIN_AVAILABLE_CLIENTS=3
-export AGGREGATION_STRATEGY="detect_median"
-python server.py
-```
-
-Honest client A:
-
-```bash
-export HOSPITAL_NAME="Hospital_A"
-export DATA_FILE="hospital_A_data.npz"
-export RUN_NAME="novelty_detect_median"
-export CLIENT_BEHAVIOR="honest"
-python client.py
-```
-
-Poisoned client:
-
-```bash
-export HOSPITAL_NAME="Hospital_B"
-export DATA_FILE="hospital_B_data.npz"
-export RUN_NAME="novelty_detect_median"
-export CLIENT_BEHAVIOR="poisoned"
-export ATTACK_MODE="sign_flip"
-export ATTACK_STRENGTH="4.0"
-python client.py
-```
-
-Honest client C:
-
-```bash
-export HOSPITAL_NAME="Hospital_C"
-export DATA_FILE="hospital_B_data.npz"
-export RUN_NAME="novelty_detect_median"
-export CLIENT_BEHAVIOR="honest"
-python client.py
-```
-
-### 4. Compare completed runs
-
-```bash
-python compare_runs.py
-```
-
-This produces evaluator-friendly summary files and a terminal table.
-
-## Web Dashboard
-
-If you do not want to manage experiments from raw terminal logs, use the included control dashboard.
-
-### What it gives you
-
-- run configuration form for normal FedAvg, median-only, and detect+median novelty runs
-- honest vs poisoned client setup
-- start and stop controls for server and clients
-- live process status cards
-- cleaner log panels
-- per-round metric charts
-- saved run browser
-- comparison table across completed runs, including rejected update counts
-
-### Backend
-
-Install the updated dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-Run the API:
-
-```bash
-uvicorn dashboard_api:app --reload
-```
-
-This starts the control backend at `http://127.0.0.1:8000`.
-
-### Frontend
-
-In a second terminal:
+Install dashboard dependencies:
 
 ```bash
 cd dashboard-ui
 npm install
-npm run dev
+npm run build
+cd ..
 ```
 
-This starts the dashboard UI at `http://127.0.0.1:5173`.
+## Run From Terminal
 
-The Vite dev server proxies `/api` requests to the FastAPI backend automatically.
+### 1. Start the server
 
-## Suggested Presentation Evidence
+For local-only testing:
 
-For your final review, the strongest proof will be:
+```bash
+source .venv/bin/activate
+export SERVER_ADDRESS="127.0.0.1:8080"
+export NUM_ROUNDS=5
+export MIN_AVAILABLE_CLIENTS=2
+export LOCAL_EPOCHS=2
+export RUN_NAME="fedavg_demo"
+python server.py
+```
 
-1. one screenshot of verbose honest-client training logs
-2. one screenshot of the poisoned-client warning and transmission
-3. one screenshot of server aggregation logs under `fedavg`
-4. one screenshot of server aggregation logs under `median`
-5. one table from `compare_runs.py`
-6. one slide showing the saved artifact folder structure
+For other laptops/devices to connect, bind to all network interfaces:
 
-## Current Limitations
+```bash
+export SERVER_ADDRESS="0.0.0.0:8080"
+python server.py
+```
 
-- The project still assumes a small fixed client topology by default.
-- Coordinate-wise median is a useful robust baseline, not a complete security framework.
-- There is no checkpoint persistence yet.
-- There are no automated tests yet.
-- The datasets are committed directly into the repo for demo convenience.
+Other clients should connect using your machine's reachable IP, for example:
 
-## Good Next Improvements
+```bash
+export SERVER_ADDRESS="192.168.1.24:8080"
+```
 
-1. add global-model checkpoint saving per round
-2. add confusion-matrix plots for presentation slides
-3. add a single-machine orchestration script to launch server and clients together
-4. add more attack types and stronger robust aggregators
-5. add tests for metric calculations and aggregation behavior
+### 2. Start Hospital A client
 
-## License
+```bash
+source .venv/bin/activate
+export HOSPITAL_NAME="Hospital_A"
+export DATA_FILE="hospital_A_data.npz"
+export SERVER_ADDRESS="127.0.0.1:8080"
+export RUN_NAME="fedavg_demo"
+python client.py
+```
 
-No license file has been added yet. If you plan to share or reuse the code publicly, add an explicit license such as MIT.
+### 3. Start Hospital B client
+
+```bash
+source .venv/bin/activate
+export HOSPITAL_NAME="Hospital_B"
+export DATA_FILE="hospital_B_data.npz"
+export SERVER_ADDRESS="127.0.0.1:8080"
+export RUN_NAME="fedavg_demo"
+python client.py
+```
+
+## Dashboard
+
+The dashboard is a presenter-friendly control panel for the same basic workflow.
+
+Start it with:
+
+```bash
+source .venv/bin/activate
+uvicorn dashboard_api:app --reload
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000
+```
+
+The dashboard shows:
+
+- server address and run configuration
+- enabled clients and their dataset shards
+- live process status
+- local client training metrics
+- number of tensors/scalars sent by each client
+- FedAvg aggregation progress
+- global model accuracy/loss by round
+- a presentable log explaining what happened in the run
+
+## Configuration
+
+| Variable | Description | Default |
+|---|---|---|
+| `SERVER_ADDRESS` | Server bind/connect address | `127.0.0.1:8080` for client, `0.0.0.0:8080` for server |
+| `NUM_ROUNDS` | Federated communication rounds | `5` |
+| `MIN_AVAILABLE_CLIENTS` | Required clients before server starts a round | `2` |
+| `LOCAL_EPOCHS` | Local epochs per round | `2` |
+| `RUN_NAME` | Artifact folder name | `default_run` |
+| `ARTIFACT_ROOT` | Root output directory | `artifacts` |
+| `HOSPITAL_NAME` | Client display name | `Hospital_A` |
+| `DATA_FILE` | Client dataset shard | `hospital_A_data.npz` |
+| `BATCH_SIZE` | Client batch size | `32` |
+| `LEARNING_RATE` | SGD learning rate | `0.01` |
+| `MOMENTUM` | SGD momentum | `0.9` |
+
+## Artifacts
+
+Each run writes outputs under:
+
+```text
+artifacts/<RUN_NAME>/
+```
+
+Server artifacts:
+
+- `server/fit_rounds.csv`
+- `server/evaluation_rounds.csv`
+- `server/summary.json`
+
+Client artifacts:
+
+- `clients/<HOSPITAL_NAME>/epoch_metrics.csv`
+- `clients/<HOSPITAL_NAME>/round_metrics.json`
+- `clients/<HOSPITAL_NAME>/summary.json`
+
+Compare saved runs:
+
+```bash
+python compare_runs.py
+```
