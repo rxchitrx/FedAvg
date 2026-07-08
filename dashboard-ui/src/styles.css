@@ -212,6 +212,48 @@ select {
   gap: 22px;
 }
 
+.client-chart-board {
+  display: grid;
+  gap: 16px;
+}
+
+.section-title-row {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.section-title-row h3,
+.section-title-row p {
+  margin: 0;
+}
+
+.section-title-row p {
+  max-width: 520px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.client-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.global-only-chart {
+  grid-column: 1 / -1;
+}
+
+.chart-subtitle {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.compact-chart {
+  height: 260px;
+}
+
 .section-head {
   display: flex;
   align-items: center;
@@ -802,6 +844,8 @@ th {
 
   .grid-two,
   .content-grid,
+  .client-chart-grid,
+  .section-title-row,
   .form-grid,
   .client-config-grid,
   .client-comparison-grid,

@@ -161,6 +161,43 @@ function App() {
     }));
   }, [displayedRun]);
 
+  const clientChartSections = useMemo(() => {
+    return clientCards.map((client) => {
+      const fitByRound = new Map();
+      const evalByRound = new Map();
+      (client.round_metrics?.round_history || []).forEach((row) => {
+        const round = toNumber(row.round);
+        if (round === null) return;
+        if (row.phase === "fit") fitByRound.set(round, row);
+        if (row.phase === "evaluate") evalByRound.set(round, row);
+      });
+
+      const rounds = Array.from(new Set([...fitByRound.keys(), ...evalByRound.keys()])).sort((a, b) => a - b);
+      return {
+        name: client.name,
+        dataFile: client.summary?.metadata?.data_file,
+        data: rounds.map((round) => ({
+          round,
+          local_train_accuracy: toNumber(fitByRound.get(round)?.train_accuracy),
+          global_test_accuracy: toNumber(evalByRound.get(round)?.accuracy),
+          local_train_loss: toNumber(fitByRound.get(round)?.train_loss),
+          global_test_loss: toNumber(evalByRound.get(round)?.loss),
+        })),
+      };
+    });
+  }, [clientCards]);
+
+  const globalChartData = useMemo(() => {
+    return (displayedRun.evaluation_rounds || [])
+      .map((row) => ({
+        round: toNumber(row.round),
+        global_accuracy: toNumber(row.accuracy),
+        global_loss: toNumber(row.loss),
+      }))
+      .filter((row) => row.round !== null)
+      .sort((a, b) => a.round - b.round);
+  }, [displayedRun]);
+
   const liveTimeline = useMemo(() => {
     const server = processLogs.server;
     const clients = Object.values(processLogs).filter((process) => process.name !== "server");
@@ -512,6 +549,114 @@ function App() {
             </div>
             <div className="global-summary-note">
               <p>Clients train locally on their own dataset shards. The server never sees raw images; it only receives model parameters and applies FedAvg.</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="client-chart-board section-block">
+          <div className="section-title-row">
+            <div>
+              <span className="eyebrow">Separated model views</span>
+              <h3>Client models and global model over rounds</h3>
+            </div>
+            <p>These charts separate local client behavior from the final global model evaluation.</p>
+          </div>
+
+          <div className="client-chart-grid">
+            {clientChartSections.length ? (
+              clientChartSections.map((clientChart) => (
+                <div className="card chart-card" key={clientChart.name}>
+                  <div className="section-head">
+                    <div>
+                      <span className="eyebrow">Client model</span>
+                      <h3>{clientChart.name}</h3>
+                    </div>
+                    <span className="chart-subtitle">{clientChart.dataFile}</span>
+                  </div>
+                  <div className="chart-wrap compact-chart">
+                    {clientChart.data.length ? (
+                      <ResponsiveContainer width="100%" height={260}>
+                        <LineChart data={clientChart.data}>
+                          <CartesianGrid stroke="#d9e3ea" strokeDasharray="4 4" />
+                          <XAxis dataKey="round" stroke="#5f7484" allowDecimals={false} />
+                          <YAxis stroke="#5f7484" domain={[0, 1]} />
+                          <Tooltip />
+                          <Legend />
+                          <Line
+                            type="monotone"
+                            dataKey="local_train_accuracy"
+                            stroke="#0d9488"
+                            strokeWidth={3}
+                            name="Local train accuracy"
+                            dot={{ r: 4 }}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="global_test_accuracy"
+                            stroke="#1b5e74"
+                            strokeWidth={3}
+                            name="Global model test accuracy on this client"
+                            dot={{ r: 4 }}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="empty-state">No client round data yet.</div>
+                    )}
+                  </div>
+                  <div className="chart-caption">
+                    Green is this client after local training. Blue is the server&apos;s averaged global model tested on this client.
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="card empty-card">Client charts will appear after clients finish at least one round.</div>
+            )}
+
+            <div className="card chart-card global-only-chart">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">Global model only</span>
+                  <h3>Global evaluation over rounds</h3>
+                </div>
+              </div>
+              <div className="chart-wrap compact-chart">
+                {globalChartData.length ? (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <LineChart data={globalChartData}>
+                      <CartesianGrid stroke="#d9e3ea" strokeDasharray="4 4" />
+                      <XAxis dataKey="round" stroke="#5f7484" allowDecimals={false} />
+                      <YAxis yAxisId="accuracy" stroke="#5f7484" domain={[0, 1]} />
+                      <YAxis yAxisId="loss" orientation="right" stroke="#9b6b2f" />
+                      <Tooltip />
+                      <Legend />
+                      <Line
+                        yAxisId="accuracy"
+                        type="monotone"
+                        dataKey="global_accuracy"
+                        stroke="#1b5e74"
+                        strokeWidth={3}
+                        name="Global test accuracy"
+                        dot={{ r: 4 }}
+                      />
+                      <Line
+                        yAxisId="loss"
+                        type="monotone"
+                        dataKey="global_loss"
+                        stroke="#c57d19"
+                        strokeWidth={3}
+                        name="Global test loss"
+                        dot={{ r: 4 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="empty-state">No global model evaluations yet.</div>
+                )}
+              </div>
+              <div className="chart-caption">
+                This chart only shows the global model after FedAvg aggregation and client-side evaluation.
+              </div>
             </div>
           </div>
         </section>
