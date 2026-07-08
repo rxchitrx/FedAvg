@@ -13,6 +13,8 @@ import {
 const defaultConfig = {
   run_name: "fedavg_demo",
   server_address: "0.0.0.0:8080",
+  client_connect_address: "127.0.0.1:8080",
+  launch_local_clients: true,
   num_rounds: 5,
   local_epochs: 2,
   batch_size: 32,
@@ -111,6 +113,20 @@ function App() {
   const processLogs = dashboard.processes || {};
   const activeRunName = selectedRun || dashboard.current_run_name || config.run_name;
   const enabledClients = config.clients.filter((client) => client.enabled);
+  const remoteClientCommands = useMemo(() => {
+    return enabledClients.map((client) => [
+      "source .venv/bin/activate",
+      `export HOSPITAL_NAME="${client.hospital_name}"`,
+      `export DATA_FILE="${client.data_file}"`,
+      `export SERVER_ADDRESS="${config.client_connect_address}"`,
+      `export RUN_NAME="${config.run_name}"`,
+      `export LOCAL_EPOCHS=${config.local_epochs}`,
+      `export BATCH_SIZE=${config.batch_size}`,
+      `export LEARNING_RATE=${config.learning_rate}`,
+      `export MOMENTUM=${config.momentum}`,
+      "python client.py",
+    ].join("\n"));
+  }, [config, enabledClients]);
 
   const clientCards = useMemo(() => {
     return (displayedRun.clients || []).map((client) => {
@@ -220,6 +236,7 @@ function App() {
         metrics: metricChips([
           { label: "Server", value: processLogs.server?.state || "ready" },
           { label: "Clients expected", value: connectedClients.length },
+          { label: "Client launch", value: config.launch_local_clients ? "This laptop" : "Remote laptops" },
           { label: "Strategy", value: "FedAvg" },
           { label: "Rounds", value: globalSummary.metadata.num_rounds || config.num_rounds },
         ]),
@@ -381,8 +398,12 @@ function App() {
                 <input value={config.run_name} onChange={(event) => setConfig((current) => ({ ...current, run_name: event.target.value }))} />
               </label>
               <label>
-                Server address
+                Server bind address
                 <input value={config.server_address} onChange={(event) => setConfig((current) => ({ ...current, server_address: event.target.value }))} />
+              </label>
+              <label>
+                Client connection address
+                <input value={config.client_connect_address} onChange={(event) => setConfig((current) => ({ ...current, client_connect_address: event.target.value }))} />
               </label>
               <label>
                 Rounds
@@ -401,6 +422,15 @@ function App() {
                 <input type="number" step="0.001" value={config.learning_rate} onChange={(event) => setConfig((current) => ({ ...current, learning_rate: Number(event.target.value) }))} />
               </label>
             </div>
+
+            <label className="wide-toggle">
+              <input
+                type="checkbox"
+                checked={config.launch_local_clients}
+                onChange={(event) => setConfig((current) => ({ ...current, launch_local_clients: event.target.checked }))}
+              />
+              Launch clients on this laptop automatically
+            </label>
 
             <div className="client-config-grid">
               {config.clients.map((client, index) => (
@@ -423,6 +453,24 @@ function App() {
                 </div>
               ))}
             </div>
+
+            {!config.launch_local_clients ? (
+              <div className="remote-client-panel">
+                <div>
+                  <span className="eyebrow">Remote client commands</span>
+                  <h4>Run these on the other laptops after starting the server here</h4>
+                  <p>Set the client connection address to this server laptop&apos;s LAN IP, for example `192.168.1.24:8080`.</p>
+                </div>
+                <div className="remote-command-grid">
+                  {enabledClients.map((client, index) => (
+                    <div className="remote-command-card" key={client.hospital_name}>
+                      <strong>{client.hospital_name}</strong>
+                      <pre>{remoteClientCommands[index]}</pre>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div id="live-run" className="card timeline-card">

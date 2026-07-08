@@ -231,7 +231,11 @@ class PneumoniaClient(fl.client.NumPyClient):
         metrics = evaluate(self.model, self.test_loader)
         print(f"[{HOSPITAL_NAME}] Global model test metrics: loss={metrics['loss']:.4f}, accuracy={metrics['accuracy']:.4f}")
         self.logger.record_evaluate(round_number, metrics)
-        return float(metrics["loss"]), len(self.test_loader.dataset), {"accuracy": float(metrics["accuracy"])}
+        return float(metrics["loss"]), len(self.test_loader.dataset), {
+            "accuracy": float(metrics["accuracy"]),
+            "hospital_name": HOSPITAL_NAME,
+            "data_file": DATA_FILE,
+        }
 
 
 def load_dataset(data_file: str) -> Tuple[DataLoader, DataLoader]:

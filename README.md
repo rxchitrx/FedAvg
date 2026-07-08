@@ -158,6 +158,112 @@ The dashboard shows:
 - global model accuracy/loss by round
 - a presentable log explaining what happened in the run
 
+## Multi-Laptop Demo
+
+Use this mode when one laptop is the central server and other laptops act as hospital clients.
+
+### 1. Put every laptop on the same network
+
+Use the same Wi-Fi or the same mobile hotspot. Find the server laptop IP:
+
+```bash
+ipconfig getifaddr en0
+```
+
+If that prints nothing, try:
+
+```bash
+ipconfig getifaddr en1
+```
+
+In the examples below, replace `192.168.1.24` with the real server laptop IP.
+
+### 2. Start the dashboard on the server laptop
+
+```bash
+source .venv/bin/activate
+uvicorn dashboard_api:app --host 0.0.0.0 --port 8000
+```
+
+Open the dashboard on the server laptop:
+
+```text
+http://127.0.0.1:8000
+```
+
+Other laptops can also view it at:
+
+```text
+http://192.168.1.24:8000
+```
+
+### 3. Configure the run in the dashboard
+
+Set:
+
+- `Server bind address`: `0.0.0.0:8080`
+- `Client connection address`: `192.168.1.24:8080`
+- uncheck `Launch clients on this laptop automatically`
+- keep `Hospital_A` and `Hospital_B` enabled, or enable only the clients that will actually connect
+
+Click `Start FedAvg run`. The server laptop will start the Flower server and wait for the remote clients.
+
+### 4. Prepare each client laptop
+
+On each client laptop:
+
+```bash
+git clone https://github.com/rxchitrx/FedAvg.git
+cd FedAvg
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Make sure the correct dataset shard is present on that laptop:
+
+- Hospital A laptop needs `hospital_A_data.npz`
+- Hospital B laptop needs `hospital_B_data.npz`
+
+### 5. Start Hospital A from a client laptop
+
+```bash
+source .venv/bin/activate
+export HOSPITAL_NAME="Hospital_A"
+export DATA_FILE="hospital_A_data.npz"
+export SERVER_ADDRESS="192.168.1.24:8080"
+export RUN_NAME="fedavg_demo"
+export LOCAL_EPOCHS=2
+export BATCH_SIZE=32
+export LEARNING_RATE=0.01
+export MOMENTUM=0.9
+python client.py
+```
+
+### 6. Start Hospital B from another client laptop
+
+```bash
+source .venv/bin/activate
+export HOSPITAL_NAME="Hospital_B"
+export DATA_FILE="hospital_B_data.npz"
+export SERVER_ADDRESS="192.168.1.24:8080"
+export RUN_NAME="fedavg_demo"
+export LOCAL_EPOCHS=2
+export BATCH_SIZE=32
+export LEARNING_RATE=0.01
+export MOMENTUM=0.9
+python client.py
+```
+
+The dashboard also prints these commands for the enabled clients when remote-client mode is selected.
+
+If a client cannot connect, check that:
+
+- all laptops are on the same network
+- the server laptop firewall allows incoming connections
+- port `8080` is not already in use
+- each client uses the server laptop IP, not `127.0.0.1`
+
 ## Configuration
 
 | Variable | Description | Default |

@@ -62,6 +62,20 @@ class ServerArtifactLogger:
         ensure_directory(SERVER_RUN_DIR)
         self.fit_csv_path = SERVER_RUN_DIR / "fit_rounds.csv"
         self.eval_csv_path = SERVER_RUN_DIR / "evaluation_rounds.csv"
+        self.client_round_csv_path = SERVER_RUN_DIR / "client_rounds.csv"
+        self.client_round_fieldnames = [
+            "round",
+            "phase",
+            "hospital_name",
+            "data_file",
+            "num_examples",
+            "train_loss",
+            "train_accuracy",
+            "tensor_count",
+            "scalar_count",
+            "loss",
+            "accuracy",
+        ]
         self.summary_json_path = SERVER_RUN_DIR / "summary.json"
         self.history: List[Dict[str, object]] = []
         self.metadata = {
@@ -96,6 +110,22 @@ class ServerArtifactLogger:
         append_csv_row(self.eval_csv_path, list(row.keys()), row)
         self.flush()
 
+    def record_client_round(self, server_round: int, phase: str, metrics: Dict[str, object], num_examples: int) -> None:
+        row = {
+            "round": server_round,
+            "phase": phase,
+            "hospital_name": metrics.get("hospital_name"),
+            "data_file": metrics.get("data_file"),
+            "num_examples": num_examples,
+            **{
+                key: value
+                for key, value in metrics.items()
+                if key not in {"hospital_name", "data_file"}
+            },
+        }
+        normalized_row = {fieldname: row.get(fieldname, "") for fieldname in self.client_round_fieldnames}
+        append_csv_row(self.client_round_csv_path, self.client_round_fieldnames, normalized_row)
+
     def flush(self) -> None:
         final_fit = next((item for item in reversed(self.history) if item["phase"] == "fit"), None)
         final_evaluate = next((item for item in reversed(self.history) if item["phase"] == "evaluate"), None)
@@ -127,6 +157,7 @@ class LoggingFedAvg(fl.server.strategy.FedAvg):
         print(f"[SERVER] Round {server_round}: received {len(results)} client update(s). Applying FedAvg.")
         for client_proxy, fit_res in results:
             metrics = dict(fit_res.metrics)
+            SERVER_ARTIFACT_LOGGER.record_client_round(server_round, "fit", metrics, fit_res.num_examples)
             print(
                 f"[SERVER] Round {server_round}: update from {metrics.get('hospital_name', client_proxy.cid)} "
                 f"examples={fit_res.num_examples}, train_accuracy={float(metrics.get('train_accuracy', 0.0)):.4f}"
@@ -158,6 +189,13 @@ class LoggingFedAvg(fl.server.strategy.FedAvg):
         return evaluate_instructions
 
     def aggregate_evaluate(self, server_round, results, failures):
+        for _, evaluate_res in results:
+            SERVER_ARTIFACT_LOGGER.record_client_round(
+                server_round,
+                "evaluate",
+                {"loss": evaluate_res.loss, **dict(evaluate_res.metrics)},
+                evaluate_res.num_examples,
+            )
         aggregated_loss, aggregated_metrics = super().aggregate_evaluate(server_round, results, failures)
         if aggregated_loss is not None:
             SERVER_ARTIFACT_LOGGER.record_eval_round(

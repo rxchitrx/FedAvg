@@ -71,7 +71,9 @@ class ClientConfig(BaseModel):
 
 class RunConfig(BaseModel):
     run_name: str = Field(min_length=1)
-    server_address: str = "127.0.0.1:8080"
+    server_address: str = "0.0.0.0:8080"
+    client_connect_address: str = "127.0.0.1:8080"
+    launch_local_clients: bool = True
     num_rounds: int = 5
     local_epochs: int = 2
     batch_size: int = 32
@@ -176,10 +178,14 @@ class RunController:
         server.start()
         self.processes = {"server": server}
 
+        if not config.launch_local_clients:
+            return
+
         time.sleep(1.0)
 
         for idx, client in enumerate(enabled_clients):
             client_env = common_env | {
+                "SERVER_ADDRESS": config.client_connect_address,
                 "HOSPITAL_NAME": client.hospital_name,
                 "DATA_FILE": client.data_file,
                 "BATCH_SIZE": str(config.batch_size),
@@ -205,6 +211,7 @@ def collect_run_details(run_name: str) -> dict[str, Any]:
     server_dir = run_dir / "server"
     fit_rows = parse_csv(server_dir / "fit_rounds.csv")
     eval_rows = parse_csv(server_dir / "evaluation_rounds.csv")
+    server_client_rows = parse_csv(server_dir / "client_rounds.csv")
     client_root = run_dir / "clients"
     client_summaries: list[dict[str, Any]] = []
     if client_root.exists():
@@ -221,6 +228,31 @@ def collect_run_details(run_name: str) -> dict[str, Any]:
                     "latest_epoch": latest_epoch,
                 }
             )
+
+    known_client_names = {client["name"] for client in client_summaries}
+    server_rows_by_client: dict[str, list[dict[str, Any]]] = {}
+    for row in server_client_rows:
+        client_name = row.get("hospital_name") or "Unknown_Client"
+        server_rows_by_client.setdefault(client_name, []).append(row)
+
+    for client_name, rows in sorted(server_rows_by_client.items()):
+        if client_name in known_client_names:
+            continue
+        latest = rows[-1] if rows else {}
+        client_summaries.append(
+            {
+                "name": client_name,
+                "summary": {
+                    "metadata": {
+                        "hospital_name": client_name,
+                        "data_file": latest.get("data_file"),
+                    },
+                    "latest": latest,
+                },
+                "round_metrics": {"round_history": rows},
+                "latest_epoch": {},
+            }
+        )
 
     return {
         "run_name": run_name,
