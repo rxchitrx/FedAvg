@@ -64,8 +64,8 @@ def should_keep_log_line(line: str) -> bool:
 
 
 class ClientConfig(BaseModel):
-    hospital_name: str
-    data_file: str
+    hospital_name: str = Field(min_length=1)
+    data_file: str = Field(min_length=1)
     enabled: bool = True
 
 
@@ -156,6 +156,13 @@ class RunController:
         enabled_clients = [client for client in config.clients if client.enabled]
         if len(enabled_clients) < 2:
             raise HTTPException(status_code=400, detail="At least two enabled clients are required.")
+        enabled_client_names = [client.hospital_name.strip() for client in enabled_clients]
+        if any(not client_name for client_name in enabled_client_names):
+            raise HTTPException(status_code=400, detail="Enabled clients must have non-empty hospital names.")
+        if any(not client.data_file.strip() for client in enabled_clients):
+            raise HTTPException(status_code=400, detail="Enabled clients must have non-empty dataset shard paths.")
+        if len(enabled_client_names) != len(set(enabled_client_names)):
+            raise HTTPException(status_code=400, detail="Enabled clients must have unique hospital names.")
 
         self.current_run_name = config.run_name
         run_dir = ARTIFACT_ROOT / config.run_name

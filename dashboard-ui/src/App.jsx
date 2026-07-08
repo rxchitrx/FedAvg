@@ -62,6 +62,16 @@ function metricChips(items) {
   return items.filter((item) => item.value !== undefined && item.value !== null && item.value !== "" && item.value !== "--");
 }
 
+function nextClientTemplate(clients) {
+  const nextIndex = clients.length;
+  const suffix = nextIndex < 26 ? String.fromCharCode(65 + nextIndex) : String(nextIndex + 1);
+  return {
+    hospital_name: `Hospital_${suffix}`,
+    data_file: `hospital_${suffix}_data.npz`,
+    enabled: true,
+  };
+}
+
 function App() {
   const [dashboard, setDashboard] = useState({
     processes: {},
@@ -353,6 +363,20 @@ function App() {
     }));
   };
 
+  const addClient = () => {
+    setConfig((current) => ({
+      ...current,
+      clients: [...current.clients, nextClientTemplate(current.clients)],
+    }));
+  };
+
+  const removeClient = (index) => {
+    setConfig((current) => ({
+      ...current,
+      clients: current.clients.filter((_, clientIndex) => clientIndex !== index),
+    }));
+  };
+
   return (
     <div className="app-shell">
       <main className="main-panel">
@@ -432,26 +456,50 @@ function App() {
               Launch clients on this laptop automatically
             </label>
 
-            <div className="client-config-grid">
-              {config.clients.map((client, index) => (
-                <div className="client-config" key={client.hospital_name}>
-                  <div className="client-config-head">
-                    <h4>{client.hospital_name}</h4>
-                    <label className="toggle">
-                      <input
-                        type="checkbox"
-                        checked={client.enabled}
-                        onChange={(event) => updateClient(index, "enabled", event.target.checked)}
-                      />
-                      Enabled
-                    </label>
-                  </div>
-                  <label>
-                    Dataset shard
-                    <input value={client.data_file} onChange={(event) => updateClient(index, "data_file", event.target.value)} />
-                  </label>
+            <div className="client-config-section">
+              <div className="client-config-title">
+                <div>
+                  <span className="eyebrow">Clients</span>
+                  <h4>{config.clients.length} configured client(s)</h4>
                 </div>
-              ))}
+                <button className="secondary-button compact-button" type="button" onClick={addClient}>
+                  Add client
+                </button>
+              </div>
+
+              <div className="client-config-grid">
+                {config.clients.map((client, index) => (
+                  <div className="client-config" key={`${index}-${client.hospital_name}`}>
+                    <div className="client-config-head">
+                      <h4>{client.hospital_name || `Client ${index + 1}`}</h4>
+                      <label className="toggle">
+                        <input
+                          type="checkbox"
+                          checked={client.enabled}
+                          onChange={(event) => updateClient(index, "enabled", event.target.checked)}
+                        />
+                        Enabled
+                      </label>
+                    </div>
+                    <label>
+                      Hospital name
+                      <input value={client.hospital_name} onChange={(event) => updateClient(index, "hospital_name", event.target.value)} />
+                    </label>
+                    <label>
+                      Dataset shard
+                      <input value={client.data_file} onChange={(event) => updateClient(index, "data_file", event.target.value)} />
+                    </label>
+                    <button
+                      className="ghost-button compact-button"
+                      type="button"
+                      onClick={() => removeClient(index)}
+                      disabled={config.clients.length <= 2}
+                    >
+                      Remove client
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {!config.launch_local_clients ? (
@@ -463,7 +511,7 @@ function App() {
                 </div>
                 <div className="remote-command-grid">
                   {enabledClients.map((client, index) => (
-                    <div className="remote-command-card" key={client.hospital_name}>
+                    <div className="remote-command-card" key={`${index}-${client.hospital_name}`}>
                       <strong>{client.hospital_name}</strong>
                       <pre>{remoteClientCommands[index]}</pre>
                     </div>

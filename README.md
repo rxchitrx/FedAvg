@@ -205,6 +205,7 @@ Set:
 - `Client connection address`: `192.168.1.24:8080`
 - uncheck `Launch clients on this laptop automatically`
 - keep `Hospital_A` and `Hospital_B` enabled, or enable only the clients that will actually connect
+- use `Add client` for extra laptops such as `Hospital_C`, `Hospital_D`, and point each one at its own dataset shard
 
 Click `Start FedAvg run`. The server laptop will start the Flower server and wait for the remote clients.
 
@@ -257,6 +258,8 @@ python client.py
 
 The dashboard also prints these commands for the enabled clients when remote-client mode is selected.
 
+For more than two laptops, click `Add client` in the dashboard, give each client a unique hospital name, and make sure each client laptop runs the generated command with its matching `HOSPITAL_NAME` and `DATA_FILE`.
+
 If a client cannot connect, check that:
 
 - all laptops are on the same network
@@ -292,6 +295,7 @@ Server artifacts:
 
 - `server/fit_rounds.csv`
 - `server/evaluation_rounds.csv`
+- `server/client_rounds.csv`
 - `server/summary.json`
 
 Client artifacts:
