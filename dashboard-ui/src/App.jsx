@@ -61,14 +61,6 @@ function getLatestByPhase(roundHistory, phase) {
   return [...(roundHistory || [])].reverse().find((entry) => entry.phase === phase) || null;
 }
 
-function metricChips(items) {
-  return items.filter((item) => item.value !== undefined && item.value !== null && item.value !== "" && item.value !== "--");
-}
-
-function clientName(index) {
-  return `Hospital_${String.fromCharCode(65 + index)}`;
-}
-
 function App() {
   const [dashboard, setDashboard] = useState({
     processes: {},
@@ -119,10 +111,6 @@ function App() {
   const displayedRun = selectedRunData || dashboard.current_run || {};
   const processLogs = dashboard.processes || {};
   const activeRunName = selectedRun || dashboard.current_run_name || config.run_name;
-  const configuredClients = useMemo(
-    () => Array.from({ length: config.client_count }, (_, index) => ({ hospital_name: clientName(index) })),
-    [config.client_count]
-  );
 
   const clientCards = useMemo(() => {
     return (displayedRun.clients || []).map((client) => {
@@ -215,96 +203,6 @@ function App() {
     ];
   }, [config.client_count, displayedRun, processLogs]);
 
-  const presentationLog = useMemo(() => {
-    const fitRounds = displayedRun.fit_rounds || [];
-    const evalRounds = displayedRun.evaluation_rounds || [];
-    const finalFit = globalSummary.finalFit || {};
-    const finalEval = globalSummary.finalEvaluate || {};
-    const serverAddress = globalSummary.metadata.server_address || config.server_address;
-    const manifest = displayedRun.dataset_manifest || {};
-    const configuredCase = datasetCases[config.dataset_case] || datasetCases.similar;
-    const connectedClients = clientCards.length
-      ? clientCards
-      : configuredClients.map((client) => ({ name: client.hospital_name, summary: { metadata: client } }));
-
-    const events = [
-      {
-        tone: "info",
-        label: "Setup",
-        title: "Local FedAvg showcase initialized",
-        body: `The server and all ${globalSummary.metadata.client_count || config.client_count} client process(es) run on this laptop using the ${manifest.dataset_case || config.dataset_case} case.`,
-        metrics: metricChips([
-          { label: "Server", value: processLogs.server?.state || "ready" },
-          { label: "Clients expected", value: connectedClients.length },
-          { label: "Dataset case", value: manifest.dataset_case || configuredCase.label },
-          { label: "Strategy", value: "FedAvg" },
-          { label: "Rounds", value: globalSummary.metadata.num_rounds || config.num_rounds },
-          { label: "Address", value: serverAddress },
-        ]),
-      },
-    ];
-
-    connectedClients.forEach((client) => {
-      const latestFit = client.latestFit || {};
-      const metadata = client.summary?.metadata || {};
-      events.push({
-        tone: latestFit.train_accuracy ? "success" : "pending",
-        label: "Client update",
-        title: `${client.name || metadata.hospital_name} trains locally and sends parameters`,
-        body: latestFit.train_accuracy
-          ? `${client.name || metadata.hospital_name} trained on its local shard and sent model weights to the server for FedAvg.`
-          : `${client.name || metadata.hospital_name} is configured with ${metadata.data_file || client.data_file || "a local dataset shard"}. Waiting for its first update.`,
-        metrics: metricChips([
-          { label: "Data file", value: metadata.data_file || client.data_file },
-          { label: "Train accuracy", value: formatMetric(latestFit.train_accuracy) },
-          { label: "Train loss", value: formatMetric(latestFit.train_loss) },
-          { label: "Tensors sent", value: formatInteger(latestFit.tensor_count) },
-          { label: "Scalars sent", value: formatInteger(latestFit.scalar_count) },
-        ]),
-      });
-    });
-
-    if (fitRounds.length) {
-      events.push({
-        tone: "info",
-        label: "Server",
-        title: "Server receives client updates and applies FedAvg",
-        body: "The server computes a weighted average of the client model parameters, using each client's number of training examples.",
-        metrics: metricChips([
-          { label: "Latest round", value: finalFit.round },
-          { label: "Client updates", value: finalFit.received_client_updates },
-          { label: "Aggregated train acc", value: formatMetric(finalFit.train_accuracy) },
-          { label: "Aggregation", value: "FedAvg" },
-        ]),
-      });
-    }
-
-    if (evalRounds.length) {
-      events.push({
-        tone: "success",
-        label: "Global model",
-        title: "Final global model is evaluated by clients",
-        body: "After FedAvg, the server sends the global model back to the clients and aggregates their evaluation metrics.",
-        metrics: metricChips([
-          { label: "Final accuracy", value: formatMetric(finalEval.accuracy) },
-          { label: "Final loss", value: formatMetric(finalEval.loss) },
-          { label: "Final round", value: finalEval.round },
-          { label: "Evaluating clients", value: finalEval.client_count },
-        ]),
-      });
-    } else {
-      events.push({
-        tone: "pending",
-        label: "Global model",
-        title: "Waiting for global evaluation",
-        body: "Final global accuracy and loss will appear after the first federated evaluation round completes.",
-        metrics: [],
-      });
-    }
-
-    return events;
-  }, [clientCards, config, configuredClients, displayedRun, globalSummary, processLogs]);
-
   const startRun = async () => {
     setBusy(true);
     setError("");
@@ -340,11 +238,6 @@ function App() {
     }
   };
 
-  const refreshComparisons = async () => {
-    await fetch("/api/comparisons/refresh", { method: "POST" });
-    await fetchDashboard();
-  };
-
   return (
     <div className="app-shell">
       <main className="main-panel">
@@ -364,9 +257,6 @@ function App() {
             <button className="secondary-button" onClick={stopRun} disabled={busy}>
               Stop run
             </button>
-            <button className="ghost-button" onClick={refreshComparisons}>
-              Refresh comparison
-            </button>
           </div>
         </header>
 
@@ -379,10 +269,6 @@ function App() {
                 <span className="eyebrow">Run configuration</span>
                 <h3>FedAvg setup</h3>
               </div>
-            </div>
-            <div className="scenario-readout">
-              <strong>Local-only demo: 1 server, 1-5 client processes, standard FedAvg.</strong>
-              <span>{datasetCases[config.dataset_case]?.body}</span>
             </div>
             <div className="form-grid">
               <label>
@@ -530,9 +416,6 @@ function App() {
               <div><span>Final loss</span><strong>{formatMetric(globalSummary.finalEvaluate?.loss)}</strong></div>
               <div><span>Client updates</span><strong>{formatInteger(globalSummary.finalFit?.received_client_updates)}</strong></div>
               <div><span>Server address</span><strong>{globalSummary.metadata.server_address || config.server_address}</strong></div>
-            </div>
-            <div className="global-summary-note">
-              <p>Clients train locally on their own dataset shards. The server never sees raw images; it only receives model parameters and applies FedAvg.</p>
             </div>
           </div>
         </section>
@@ -682,74 +565,6 @@ function App() {
           ) : (
             <div className="card empty-card">No client metrics available yet for this run.</div>
           )}
-        </section>
-
-        <section className="grid-two section-block">
-          <div className="card comparison-card">
-            <div className="section-head">
-              <div>
-                <span className="eyebrow">Run comparison</span>
-                <h3>Saved FedAvg outcomes</h3>
-              </div>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Run</th>
-                  <th>Case</th>
-                  <th>Clients</th>
-                  <th>Rounds</th>
-                  <th>Accuracy</th>
-                  <th>Loss</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dashboard.comparisons.map((row) => (
-                  <tr key={row.run_name}>
-                    <td>{row.run_name}</td>
-                    <td>{row.dataset_case || "--"}</td>
-                    <td>{row.client_count || "--"}</td>
-                    <td>{row.num_rounds}</td>
-                    <td>{formatMetric(row.final_eval_accuracy)}</td>
-                    <td>{formatMetric(row.final_eval_loss)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="card logs-card presentation-log-card">
-            <div className="section-head">
-              <div>
-                <span className="eyebrow">Presentation log</span>
-                <h3>What this run is doing</h3>
-              </div>
-            </div>
-            <div className="presentation-log">
-              {presentationLog.map((event, index) => (
-                <article className={`presentation-event ${event.tone}`} key={`${event.label}-${index}`}>
-                  <div className="event-index">{index + 1}</div>
-                  <div className="event-body">
-                    <div className="event-heading">
-                      <span className="event-label">{event.label}</span>
-                      <h4>{event.title}</h4>
-                    </div>
-                    <p>{event.body}</p>
-                    {event.metrics.length ? (
-                      <div className="event-metrics">
-                        {event.metrics.map((metric) => (
-                          <div key={`${event.label}-${metric.label}`}>
-                            <span>{metric.label}</span>
-                            <strong>{metric.value}</strong>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
         </section>
 
         <section id="saved-runs" className="card settings-card section-block">

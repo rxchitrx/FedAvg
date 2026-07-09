@@ -96,9 +96,7 @@ select {
 .config-card,
 .timeline-card,
 .chart-card,
-.client-card,
-.comparison-card,
-.logs-card {
+.client-card {
   padding: 22px;
 }
 
@@ -276,30 +274,6 @@ button:disabled {
   background: rgba(25, 94, 119, 0.06);
 }
 
-.scenario-readout {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 16px;
-  padding: 14px 16px;
-  border: 1px solid rgba(15, 140, 134, 0.16);
-  border-radius: 14px;
-  background: rgba(15, 140, 134, 0.08);
-}
-
-.scenario-readout span {
-  color: var(--muted);
-}
-
-.scenario-readout.danger {
-  border-color: rgba(201, 74, 56, 0.2);
-  background: rgba(201, 74, 56, 0.1);
-}
-
-.scenario-readout.success {
-  border-color: rgba(15, 140, 134, 0.22);
-  background: rgba(15, 140, 134, 0.12);
-}
-
 label {
   display: flex;
   flex-direction: column;
@@ -447,14 +421,6 @@ select {
 .summary-card,
 .settings-card {
   padding: 22px;
-}
-
-.global-summary-note {
-  margin-top: 16px;
-  padding: 14px 16px;
-  border-radius: 16px;
-  background: var(--surface-soft);
-  color: var(--muted);
 }
 
 .interpretation-card {
@@ -610,164 +576,6 @@ th {
   background: rgba(25, 94, 119, 0.05);
 }
 
-.activity-feed {
-  display: grid;
-  gap: 10px;
-  max-height: 430px;
-  overflow: auto;
-  padding-right: 4px;
-}
-
-.activity-row {
-  display: grid;
-  grid-template-columns: 84px auto 1fr;
-  align-items: start;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid rgba(216, 226, 232, 0.9);
-  border-radius: 16px;
-  background: rgba(238, 244, 247, 0.7);
-}
-
-.activity-source {
-  color: var(--blue);
-  font-weight: 800;
-}
-
-.activity-row .badge {
-  padding: 5px 9px;
-  font-size: 0.72rem;
-}
-
-.activity-row p {
-  margin: 0;
-  color: var(--muted);
-  font-family: "JetBrains Mono", "SF Mono", "Menlo", monospace;
-  font-size: 0.78rem;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.presentation-log-card {
-  grid-column: 1 / -1;
-}
-
-.presentation-log {
-  display: grid;
-  gap: 14px;
-}
-
-.presentation-event {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 14px;
-  padding: 16px;
-  border: 1px solid rgba(216, 226, 232, 0.95);
-  border-radius: 20px;
-  background: linear-gradient(180deg, rgba(238, 244, 247, 0.75), rgba(255, 255, 255, 0.92));
-}
-
-.presentation-event.success {
-  border-color: rgba(15, 140, 134, 0.22);
-  background: linear-gradient(180deg, rgba(15, 140, 134, 0.1), rgba(255, 255, 255, 0.94));
-}
-
-.presentation-event.warning {
-  border-color: rgba(197, 125, 25, 0.25);
-  background: linear-gradient(180deg, rgba(197, 125, 25, 0.12), rgba(255, 255, 255, 0.94));
-}
-
-.presentation-event.danger {
-  border-color: rgba(201, 74, 56, 0.22);
-  background: linear-gradient(180deg, rgba(201, 74, 56, 0.12), rgba(255, 255, 255, 0.94));
-}
-
-.presentation-event.pending {
-  border-style: dashed;
-}
-
-.event-index {
-  width: 34px;
-  height: 34px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  background: var(--blue);
-  color: white;
-  font-weight: 800;
-}
-
-.presentation-event.success .event-index {
-  background: var(--teal);
-}
-
-.presentation-event.warning .event-index {
-  background: var(--amber);
-}
-
-.presentation-event.danger .event-index {
-  background: var(--red);
-}
-
-.presentation-event.pending .event-index {
-  background: #90a4b2;
-}
-
-.event-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.event-heading h4 {
-  margin: 0;
-  font-size: 1.02rem;
-}
-
-.event-label {
-  color: var(--muted);
-  font-size: 0.76rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.event-body p {
-  margin: 8px 0 0;
-  color: var(--muted);
-  line-height: 1.5;
-}
-
-.event-metrics {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.event-metrics div {
-  min-width: 0;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: white;
-  border: 1px solid rgba(216, 226, 232, 0.78);
-}
-
-.event-metrics span {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--muted);
-  font-size: 0.76rem;
-}
-
-.event-metrics strong {
-  display: block;
-  overflow-wrap: anywhere;
-  font-size: 0.95rem;
-}
-
 .error-banner {
   background: rgba(201, 74, 56, 0.12);
   color: #9f2f22;
@@ -784,9 +592,6 @@ th {
   .case-preview-grid,
   .form-grid,
   .client-comparison-grid,
-  .activity-row,
-  .presentation-event,
-  .event-metrics,
   .saved-runs-grid,
   .delta-strip,
   .mini-metrics {
