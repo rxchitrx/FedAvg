@@ -306,6 +306,18 @@ class RunController:
         for process in self.processes.values():
             process.stop()
 
+    def clear_saved_runs(self) -> None:
+        if any(proc.status()["state"] == "running" for proc in self.processes.values()):
+            raise HTTPException(status_code=400, detail="Stop the active run before clearing saved runs.")
+        if ARTIFACT_ROOT.exists():
+            for path in ARTIFACT_ROOT.iterdir():
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+        self.current_run_name = None
+        self.processes = {}
+
     def process_state(self) -> dict[str, Any]:
         return {name: process.status() for name, process in self.processes.items()}
 
@@ -434,6 +446,12 @@ def start_run(config: RunConfig) -> dict[str, Any]:
 def stop_run() -> dict[str, bool]:
     controller.stop_run()
     return {"stopped": True}
+
+
+@app.post("/api/runs/clear")
+def clear_saved_runs() -> dict[str, bool]:
+    controller.clear_saved_runs()
+    return {"cleared": True}
 
 
 @app.get("/api/run/{run_name}")

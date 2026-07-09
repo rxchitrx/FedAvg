@@ -243,6 +243,26 @@ function App() {
     }
   };
 
+  const clearSavedRuns = async () => {
+    if (!window.confirm("Clear all saved runs from the dashboard?")) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/runs/clear", { method: "POST" });
+      if (!response.ok) {
+        const payload = await response.json();
+        throw new Error(payload.detail || "Failed to clear saved runs");
+      }
+      setSelectedRun("");
+      setSelectedRunData(null);
+      await fetchDashboard();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="app-shell">
       <main className="main-panel">
@@ -261,6 +281,9 @@ function App() {
             </button>
             <button className="secondary-button" onClick={stopRun} disabled={busy}>
               Stop run
+            </button>
+            <button className="danger-button" onClick={clearSavedRuns} disabled={busy}>
+              Clear saved runs
             </button>
           </div>
         </header>
