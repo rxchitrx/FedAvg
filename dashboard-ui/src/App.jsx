@@ -53,6 +53,11 @@ function formatInteger(value) {
   return number === null ? "--" : Math.round(number).toLocaleString();
 }
 
+function formatDatasetName(value) {
+  if (!value) return "--";
+  return String(value).split(/[\\/]/).pop() || String(value);
+}
+
 function badgeClass(state) {
   return `badge badge-${state || "idle"}`;
 }
@@ -166,7 +171,7 @@ function App() {
       const rounds = Array.from(new Set([...fitByRound.keys(), ...evalByRound.keys()])).sort((a, b) => a - b);
       return {
         name: client.name,
-        dataFile: client.summary?.metadata?.data_file,
+        dataFile: formatDatasetName(client.summary?.metadata?.data_file),
         data: rounds.map((round) => ({
           round,
           local_train_accuracy: toNumber(fitByRound.get(round)?.train_accuracy),
@@ -547,7 +552,7 @@ function App() {
                       <div><span>Train loss</span><strong>{formatMetric(client.latestFit?.train_loss)}</strong></div>
                       <div><span>Tensors sent</span><strong>{formatInteger(client.latestFit?.tensor_count)}</strong></div>
                       <div><span>Scalars sent</span><strong>{formatInteger(client.latestFit?.scalar_count)}</strong></div>
-                      <div><span>Dataset</span><strong>{client.summary?.metadata?.data_file || "--"}</strong></div>
+                      <div><span>Dataset</span><strong>{formatDatasetName(client.summary?.metadata?.data_file)}</strong></div>
                       <div><span>Server</span><strong>{client.summary?.metadata?.server_address || "--"}</strong></div>
                     </div>
                   </div>
@@ -556,7 +561,7 @@ function App() {
                     <div className="mini-metrics">
                       <div><span>Accuracy</span><strong>{formatMetric(client.latestEvaluate?.accuracy)}</strong></div>
                       <div><span>Loss</span><strong>{formatMetric(client.latestEvaluate?.loss)}</strong></div>
-                      <div><span>Data file</span><strong>{client.summary?.metadata?.data_file || "--"}</strong></div>
+                      <div><span>Data file</span><strong>{formatDatasetName(client.summary?.metadata?.data_file)}</strong></div>
                     </div>
                   </div>
                 </div>
