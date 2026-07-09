@@ -130,9 +130,65 @@ def stratified_index_splits(labels: np.ndarray, client_count: int, seed: int) ->
 
 
 def different_index_splits(images: np.ndarray, labels: np.ndarray, client_count: int) -> list[np.ndarray]:
+    if client_count == 1:
+        return [np.arange(len(labels), dtype=int)]
+
+    flat_labels = labels.reshape(-1)
+    unique_labels = np.unique(flat_labels)
+    if len(unique_labels) != 2:
+        return stratified_index_splits(flat_labels, client_count, seed=17)
+
+    negative_label, positive_label = unique_labels
+    client_sizes = [len(chunk) for chunk in np.array_split(np.arange(len(flat_labels)), client_count)]
+    positive_total = int(np.sum(flat_labels == positive_label))
+    global_positive_rate = positive_total / len(flat_labels)
+    target_rates = np.clip(
+        global_positive_rate + np.linspace(-0.22, 0.22, client_count),
+        0.08,
+        0.92,
+    )
+    positive_counts = [int(round(size * rate)) for size, rate in zip(client_sizes, target_rates)]
+    positive_counts = [min(max(count, 1), size - 1) for count, size in zip(positive_counts, client_sizes)]
+
+    diff = positive_total - sum(positive_counts)
+    while diff != 0:
+        changed = False
+        for index, size in enumerate(client_sizes):
+            if diff > 0 and positive_counts[index] < size - 1:
+                positive_counts[index] += 1
+                diff -= 1
+                changed = True
+            elif diff < 0 and positive_counts[index] > 1:
+                positive_counts[index] -= 1
+                diff += 1
+                changed = True
+            if diff == 0:
+                break
+        if not changed:
+            break
+
+    negative_counts = [size - positive for size, positive in zip(client_sizes, positive_counts)]
     brightness = images.reshape(images.shape[0], -1).mean(axis=1)
-    order = np.lexsort((brightness, labels.reshape(-1)))
-    return [np.array(chunk, dtype=int) for chunk in np.array_split(order, client_count)]
+    positive_indices = np.where(flat_labels == positive_label)[0]
+    negative_indices = np.where(flat_labels == negative_label)[0]
+    positive_indices = positive_indices[np.argsort(brightness[positive_indices])]
+    negative_indices = negative_indices[np.argsort(brightness[negative_indices])]
+
+    positive_offset = 0
+    negative_offset = 0
+    splits: list[np.ndarray] = []
+    for positive_count, negative_count in zip(positive_counts, negative_counts):
+        client_indices = np.concatenate(
+            [
+                positive_indices[positive_offset : positive_offset + positive_count],
+                negative_indices[negative_offset : negative_offset + negative_count],
+            ]
+        )
+        positive_offset += positive_count
+        negative_offset += negative_count
+        splits.append(np.array(sorted(client_indices), dtype=int))
+
+    return splits
 
 
 def make_payload(dataset: dict[str, np.ndarray], train_indices: np.ndarray, test_indices: np.ndarray) -> dict[str, np.ndarray]:
@@ -163,7 +219,7 @@ def prepare_showcase_datasets(config: RunConfig, run_dir: Path) -> list[dict[str
         test_splits = stratified_index_splits(y_test, config.client_count, seed=11)
     else:
         train_splits = different_index_splits(dataset["x_train"], y_train, config.client_count)
-        test_splits = different_index_splits(dataset["x_test"], y_test, config.client_count)
+        test_splits = stratified_index_splits(y_test, config.client_count, seed=13)
 
     for index in range(config.client_count):
         hospital_name = f"Hospital_{chr(65 + index)}"
