@@ -225,13 +225,13 @@ button:disabled {
   gap: 22px;
 }
 
-.global-only-chart {
-  grid-column: 1 / -1;
-}
-
 .chart-subtitle {
   color: var(--muted);
   font-size: 0.86rem;
+}
+
+.global-summary-card {
+  align-self: stretch;
 }
 
 .compact-chart {

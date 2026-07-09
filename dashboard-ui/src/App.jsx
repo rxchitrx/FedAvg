@@ -137,19 +137,6 @@ function App() {
     };
   }, [displayedRun]);
 
-  const chartData = useMemo(() => {
-    return (displayedRun.evaluation_rounds || [])
-      .map((row) => ({
-        round: toNumber(row.round),
-        global_accuracy: toNumber(row.accuracy),
-        global_recall: toNumber(row.recall),
-        global_f1_score: toNumber(row.f1_score),
-        global_specificity: toNumber(row.specificity),
-      }))
-      .filter((row) => row.round !== null)
-      .sort((a, b) => a.round - b.round);
-  }, [displayedRun]);
-
   const clientChartSections = useMemo(() => {
     return clientCards.map((client) => {
       const fitByRound = new Map();
@@ -386,66 +373,6 @@ function App() {
           </div>
         </section>
 
-        <section id="results" className="content-grid section-block">
-          <div className="card chart-card">
-            <div className="section-head">
-              <div>
-                <span className="eyebrow">Round metrics</span>
-                <h3>Global model metrics by round</h3>
-              </div>
-              <select value={selectedRun} onChange={(event) => setSelectedRun(event.target.value)}>
-                <option value="">Current run</option>
-                {dashboard.available_runs.map((run) => (
-                  <option key={run.run_name} value={run.run_name}>
-                    {run.run_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="chart-wrap">
-              {chartData.length ? (
-                <ResponsiveContainer width="100%" height={320}>
-                  <LineChart data={chartData}>
-                    <CartesianGrid stroke="#d9e3ea" strokeDasharray="4 4" />
-                    <XAxis dataKey="round" stroke="#5f7484" allowDecimals={false} />
-                    <YAxis stroke="#5f7484" domain={[0, 1]} />
-                    <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="global_accuracy" stroke="#1b5e74" strokeWidth={3} name="Accuracy" dot={{ r: 4 }} />
-                    <Line type="monotone" dataKey="global_recall" stroke="#0d9488" strokeWidth={3} name="Recall" dot={{ r: 4 }} />
-                    <Line type="monotone" dataKey="global_f1_score" stroke="#c57d19" strokeWidth={3} name="F1 score" dot={{ r: 4 }} />
-                    <Line type="monotone" dataKey="global_specificity" stroke="#9f2f22" strokeWidth={3} name="Specificity" dot={{ r: 4 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="empty-state">No round data yet for the selected run.</div>
-              )}
-            </div>
-          </div>
-
-          <div className="card summary-card">
-            <div className="section-head">
-              <div>
-                <span className="eyebrow">Global model</span>
-                <h3>Final FedAvg result</h3>
-              </div>
-            </div>
-            <div className="metric-pair-grid">
-              <div><span>Strategy</span><strong>FedAvg</strong></div>
-              <div><span>Dataset case</span><strong>{globalSummary.metadata.dataset_case || displayedRun.dataset_manifest?.dataset_case || config.dataset_case}</strong></div>
-              <div><span>Clients</span><strong>{globalSummary.metadata.client_count || displayedRun.dataset_manifest?.client_count || config.client_count}</strong></div>
-              <div><span>Rounds</span><strong>{globalSummary.metadata.num_rounds || "--"}</strong></div>
-              <div><span>Final accuracy</span><strong>{formatMetric(globalSummary.finalEvaluate?.accuracy)}</strong></div>
-              <div><span>Final recall</span><strong>{formatMetric(globalSummary.finalEvaluate?.recall)}</strong></div>
-              <div><span>Final F1</span><strong>{formatMetric(globalSummary.finalEvaluate?.f1_score)}</strong></div>
-              <div><span>Specificity</span><strong>{formatMetric(globalSummary.finalEvaluate?.specificity)}</strong></div>
-              <div><span>Final loss</span><strong>{formatMetric(globalSummary.finalEvaluate?.loss)}</strong></div>
-              <div><span>Client updates</span><strong>{formatInteger(globalSummary.finalFit?.received_client_updates)}</strong></div>
-              <div><span>Server address</span><strong>{globalSummary.metadata.server_address || config.server_address}</strong></div>
-            </div>
-          </div>
-        </section>
-
         <section className="client-chart-board section-block">
           <div className="section-title-row">
             <div>
@@ -528,6 +455,14 @@ function App() {
                   <span className="eyebrow">Global model only</span>
                   <h3>Global evaluation over rounds</h3>
                 </div>
+                <select value={selectedRun} onChange={(event) => setSelectedRun(event.target.value)}>
+                  <option value="">Current run</option>
+                  {dashboard.available_runs.map((run) => (
+                    <option key={run.run_name} value={run.run_name}>
+                      {run.run_name}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="chart-wrap compact-chart">
                 {globalChartData.length ? (
@@ -578,6 +513,28 @@ function App() {
               </div>
               <div className="chart-caption">
                 This chart only shows the global model after FedAvg aggregation and client-side evaluation.
+              </div>
+            </div>
+
+            <div className="card summary-card global-summary-card">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">Global model</span>
+                  <h3>Final FedAvg result</h3>
+                </div>
+              </div>
+              <div className="metric-pair-grid">
+                <div><span>Strategy</span><strong>FedAvg</strong></div>
+                <div><span>Dataset case</span><strong>{globalSummary.metadata.dataset_case || displayedRun.dataset_manifest?.dataset_case || config.dataset_case}</strong></div>
+                <div><span>Clients</span><strong>{globalSummary.metadata.client_count || displayedRun.dataset_manifest?.client_count || config.client_count}</strong></div>
+                <div><span>Rounds</span><strong>{globalSummary.metadata.num_rounds || "--"}</strong></div>
+                <div><span>Final accuracy</span><strong>{formatMetric(globalSummary.finalEvaluate?.accuracy)}</strong></div>
+                <div><span>Final recall</span><strong>{formatMetric(globalSummary.finalEvaluate?.recall)}</strong></div>
+                <div><span>Final F1</span><strong>{formatMetric(globalSummary.finalEvaluate?.f1_score)}</strong></div>
+                <div><span>Specificity</span><strong>{formatMetric(globalSummary.finalEvaluate?.specificity)}</strong></div>
+                <div><span>Final loss</span><strong>{formatMetric(globalSummary.finalEvaluate?.loss)}</strong></div>
+                <div><span>Client updates</span><strong>{formatInteger(globalSummary.finalFit?.received_client_updates)}</strong></div>
+                <div><span>Server address</span><strong>{globalSummary.metadata.server_address || config.server_address}</strong></div>
               </div>
             </div>
           </div>
