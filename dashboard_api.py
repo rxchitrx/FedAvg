@@ -3,6 +3,7 @@ import json
 import os
 import signal
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -68,6 +69,68 @@ def should_keep_log_line(line: str) -> bool:
         "datetime.datetime.utcnow()",
     ]
     return not any(fragment in line for fragment in noisy_fragments)
+
+
+def cleanup_local_flower_processes() -> None:
+    current_pid = os.getpid()
+    result = subprocess.run(
+        ["ps", "-ax", "-o", "pid=", "-o", "command="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        parts = stripped.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        pid_text, command = parts
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if pid == current_pid:
+            continue
+        if command.endswith(" server.py") or command.endswith(" client.py"):
+            pids.append(pid)
+
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    time.sleep(0.5)
+
+    for pid in pids:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def assert_server_address_available(server_address: str) -> None:
+    try:
+        host, port_text = server_address.rsplit(":", 1)
+        port = int(port_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Server address must look like host:port.") from exc
+
+    connect_host = "127.0.0.1" if host in {"0.0.0.0", ""} else host
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.25)
+        if sock.connect_ex((connect_host, port)) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Port {server_address} is already in use. Stop the old run or choose another port.",
+            )
 
 
 class RunConfig(BaseModel):
@@ -317,6 +380,8 @@ class RunController:
     def start_run(self, config: RunConfig) -> None:
         if any(proc.status()["state"] == "running" for proc in self.processes.values()):
             raise HTTPException(status_code=400, detail="A run is already active. Stop it before starting another.")
+        cleanup_local_flower_processes()
+        assert_server_address_available(config.server_address)
 
         self.current_run_name = config.run_name
         run_dir = ARTIFACT_ROOT / config.run_name
@@ -343,6 +408,10 @@ class RunController:
         self.processes = {"server": server}
 
         time.sleep(1.0)
+        server_status = server.status()
+        if server_status["state"] != "running":
+            recent_logs = "\n".join(server_status.get("recent_logs", [])[-8:])
+            raise HTTPException(status_code=500, detail=f"Flower server failed to start.\n{recent_logs}")
 
         for idx, client in enumerate(enabled_clients):
             client_env = common_env | {
@@ -361,10 +430,14 @@ class RunController:
     def stop_run(self) -> None:
         for process in self.processes.values():
             process.stop()
+        cleanup_local_flower_processes()
+        self.processes = {}
+        self.current_run_name = None
 
     def clear_saved_runs(self) -> None:
         if any(proc.status()["state"] == "running" for proc in self.processes.values()):
             raise HTTPException(status_code=400, detail="Stop the active run before clearing saved runs.")
+        cleanup_local_flower_processes()
         if ARTIFACT_ROOT.exists():
             for path in ARTIFACT_ROOT.iterdir():
                 if path.is_dir():
