@@ -12,26 +12,29 @@ import {
 
 const defaultConfig = {
   run_name: "fedavg_demo",
-  server_address: "0.0.0.0:8080",
-  client_connect_address: "127.0.0.1:8080",
-  launch_local_clients: true,
+  server_address: "127.0.0.1:8080",
+  dataset_case: "similar",
+  client_count: 2,
   num_rounds: 5,
   local_epochs: 2,
   batch_size: 32,
   learning_rate: 0.01,
   momentum: 0.9,
-  clients: [
-    {
-      hospital_name: "Hospital_A",
-      data_file: "hospital_A_data.npz",
-      enabled: true,
-    },
-    {
-      hospital_name: "Hospital_B",
-      data_file: "hospital_B_data.npz",
-      enabled: true,
-    },
-  ],
+};
+
+const datasetCases = {
+  different: {
+    label: "Different datasets",
+    body: "Each client gets a different non-IID shard, skewed by label and image appearance.",
+  },
+  same: {
+    label: "Same dataset",
+    body: "Each client gets an exact copy of the same combined dataset.",
+  },
+  similar: {
+    label: "Similar fragments",
+    body: "Each client gets a different stratified fragment from the same combined dataset.",
+  },
 };
 
 function toNumber(value) {
@@ -62,14 +65,8 @@ function metricChips(items) {
   return items.filter((item) => item.value !== undefined && item.value !== null && item.value !== "" && item.value !== "--");
 }
 
-function nextClientTemplate(clients) {
-  const nextIndex = clients.length;
-  const suffix = nextIndex < 26 ? String.fromCharCode(65 + nextIndex) : String(nextIndex + 1);
-  return {
-    hospital_name: `Hospital_${suffix}`,
-    data_file: `hospital_${suffix}_data.npz`,
-    enabled: true,
-  };
+function clientName(index) {
+  return `Hospital_${String.fromCharCode(65 + index)}`;
 }
 
 function App() {
@@ -122,21 +119,10 @@ function App() {
   const displayedRun = selectedRunData || dashboard.current_run || {};
   const processLogs = dashboard.processes || {};
   const activeRunName = selectedRun || dashboard.current_run_name || config.run_name;
-  const enabledClients = config.clients.filter((client) => client.enabled);
-  const remoteClientCommands = useMemo(() => {
-    return enabledClients.map((client) => [
-      "source .venv/bin/activate",
-      `export HOSPITAL_NAME="${client.hospital_name}"`,
-      `export DATA_FILE="${client.data_file}"`,
-      `export SERVER_ADDRESS="${config.client_connect_address}"`,
-      `export RUN_NAME="${config.run_name}"`,
-      `export LOCAL_EPOCHS=${config.local_epochs}`,
-      `export BATCH_SIZE=${config.batch_size}`,
-      `export LEARNING_RATE=${config.learning_rate}`,
-      `export MOMENTUM=${config.momentum}`,
-      "python client.py",
-    ].join("\n"));
-  }, [config, enabledClients]);
+  const configuredClients = useMemo(
+    () => Array.from({ length: config.client_count }, (_, index) => ({ hospital_name: clientName(index) })),
+    [config.client_count]
+  );
 
   const clientCards = useMemo(() => {
     return (displayedRun.clients || []).map((client) => {
@@ -222,12 +208,12 @@ function App() {
     const evalRounds = displayedRun.evaluation_rounds || [];
     return [
       { label: "Server listening", complete: server?.state === "running" || server?.state === "finished" },
-      { label: "Clients connected", complete: clients.length >= enabledClients.length || fitRounds.length > 0 },
+      { label: "Clients connected", complete: clients.length >= config.client_count || fitRounds.length > 0 },
       { label: "Local training", complete: fitRounds.length > 0 },
       { label: "FedAvg aggregation", complete: fitRounds.length > 0 },
       { label: "Global evaluation", complete: evalRounds.length > 0 },
     ];
-  }, [displayedRun, enabledClients.length, processLogs]);
+  }, [config.client_count, displayedRun, processLogs]);
 
   const presentationLog = useMemo(() => {
     const fitRounds = displayedRun.fit_rounds || [];
@@ -235,20 +221,25 @@ function App() {
     const finalFit = globalSummary.finalFit || {};
     const finalEval = globalSummary.finalEvaluate || {};
     const serverAddress = globalSummary.metadata.server_address || config.server_address;
-    const connectedClients = clientCards.length ? clientCards : enabledClients.map((client) => ({ name: client.hospital_name, summary: { metadata: client } }));
+    const manifest = displayedRun.dataset_manifest || {};
+    const configuredCase = datasetCases[config.dataset_case] || datasetCases.similar;
+    const connectedClients = clientCards.length
+      ? clientCards
+      : configuredClients.map((client) => ({ name: client.hospital_name, summary: { metadata: client } }));
 
     const events = [
       {
         tone: "info",
-        label: "Network",
-        title: "FedAvg network initialized",
-        body: `The server listens on ${serverAddress}. Other devices can connect their clients to this IP and port.`,
+        label: "Setup",
+        title: "Local FedAvg showcase initialized",
+        body: `The server and all ${globalSummary.metadata.client_count || config.client_count} client process(es) run on this laptop using the ${manifest.dataset_case || config.dataset_case} case.`,
         metrics: metricChips([
           { label: "Server", value: processLogs.server?.state || "ready" },
           { label: "Clients expected", value: connectedClients.length },
-          { label: "Client launch", value: config.launch_local_clients ? "This laptop" : "Remote laptops" },
+          { label: "Dataset case", value: manifest.dataset_case || configuredCase.label },
           { label: "Strategy", value: "FedAvg" },
           { label: "Rounds", value: globalSummary.metadata.num_rounds || config.num_rounds },
+          { label: "Address", value: serverAddress },
         ]),
       },
     ];
@@ -312,7 +303,7 @@ function App() {
     }
 
     return events;
-  }, [clientCards, config, displayedRun, enabledClients, globalSummary, processLogs]);
+  }, [clientCards, config, configuredClients, displayedRun, globalSummary, processLogs]);
 
   const startRun = async () => {
     setBusy(true);
@@ -354,29 +345,6 @@ function App() {
     await fetchDashboard();
   };
 
-  const updateClient = (index, field, value) => {
-    setConfig((current) => ({
-      ...current,
-      clients: current.clients.map((client, clientIndex) =>
-        clientIndex === index ? { ...client, [field]: value } : client
-      ),
-    }));
-  };
-
-  const addClient = () => {
-    setConfig((current) => ({
-      ...current,
-      clients: [...current.clients, nextClientTemplate(current.clients)],
-    }));
-  };
-
-  const removeClient = (index) => {
-    setConfig((current) => ({
-      ...current,
-      clients: current.clients.filter((_, clientIndex) => clientIndex !== index),
-    }));
-  };
-
   return (
     <div className="app-shell">
       <main className="main-panel">
@@ -413,8 +381,8 @@ function App() {
               </div>
             </div>
             <div className="scenario-readout">
-              <strong>Basic architecture only: 1 server, enabled clients, standard FedAvg.</strong>
-              <span>Use your machine IP in `SERVER_ADDRESS` when clients run from other devices.</span>
+              <strong>Local-only demo: 1 server, 1-5 client processes, standard FedAvg.</strong>
+              <span>{datasetCases[config.dataset_case]?.body}</span>
             </div>
             <div className="form-grid">
               <label>
@@ -422,12 +390,28 @@ function App() {
                 <input value={config.run_name} onChange={(event) => setConfig((current) => ({ ...current, run_name: event.target.value }))} />
               </label>
               <label>
-                Server bind address
+                Local Flower address
                 <input value={config.server_address} onChange={(event) => setConfig((current) => ({ ...current, server_address: event.target.value }))} />
               </label>
               <label>
-                Client connection address
-                <input value={config.client_connect_address} onChange={(event) => setConfig((current) => ({ ...current, client_connect_address: event.target.value }))} />
+                Dataset case
+                <select value={config.dataset_case} onChange={(event) => setConfig((current) => ({ ...current, dataset_case: event.target.value }))}>
+                  {Object.entries(datasetCases).map(([value, item]) => (
+                    <option key={value} value={value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Number of clients
+                <select value={config.client_count} onChange={(event) => setConfig((current) => ({ ...current, client_count: Number(event.target.value) }))}>
+                  {[1, 2, 3, 4, 5].map((count) => (
+                    <option key={count} value={count}>
+                      {count}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>
                 Rounds
@@ -447,78 +431,19 @@ function App() {
               </label>
             </div>
 
-            <label className="wide-toggle">
-              <input
-                type="checkbox"
-                checked={config.launch_local_clients}
-                onChange={(event) => setConfig((current) => ({ ...current, launch_local_clients: event.target.checked }))}
-              />
-              Launch clients on this laptop automatically
-            </label>
-
-            <div className="client-config-section">
-              <div className="client-config-title">
-                <div>
-                  <span className="eyebrow">Clients</span>
-                  <h4>{config.clients.length} configured client(s)</h4>
-                </div>
-                <button className="secondary-button compact-button" type="button" onClick={addClient}>
-                  Add client
+            <div className="case-preview-grid">
+              {Object.entries(datasetCases).map(([value, item]) => (
+                <button
+                  className={`case-preview ${config.dataset_case === value ? "selected" : ""}`}
+                  key={value}
+                  type="button"
+                  onClick={() => setConfig((current) => ({ ...current, dataset_case: value }))}
+                >
+                  <strong>{item.label}</strong>
+                  <span>{item.body}</span>
                 </button>
-              </div>
-
-              <div className="client-config-grid">
-                {config.clients.map((client, index) => (
-                  <div className="client-config" key={`${index}-${client.hospital_name}`}>
-                    <div className="client-config-head">
-                      <h4>{client.hospital_name || `Client ${index + 1}`}</h4>
-                      <label className="toggle">
-                        <input
-                          type="checkbox"
-                          checked={client.enabled}
-                          onChange={(event) => updateClient(index, "enabled", event.target.checked)}
-                        />
-                        Enabled
-                      </label>
-                    </div>
-                    <label>
-                      Hospital name
-                      <input value={client.hospital_name} onChange={(event) => updateClient(index, "hospital_name", event.target.value)} />
-                    </label>
-                    <label>
-                      Dataset shard
-                      <input value={client.data_file} onChange={(event) => updateClient(index, "data_file", event.target.value)} />
-                    </label>
-                    <button
-                      className="ghost-button compact-button"
-                      type="button"
-                      onClick={() => removeClient(index)}
-                      disabled={config.clients.length <= 2}
-                    >
-                      Remove client
-                    </button>
-                  </div>
-                ))}
-              </div>
+              ))}
             </div>
-
-            {!config.launch_local_clients ? (
-              <div className="remote-client-panel">
-                <div>
-                  <span className="eyebrow">Remote client commands</span>
-                  <h4>Run these on the other laptops after starting the server here</h4>
-                  <p>Set the client connection address to this server laptop&apos;s LAN IP, for example `192.168.1.24:8080`.</p>
-                </div>
-                <div className="remote-command-grid">
-                  {enabledClients.map((client, index) => (
-                    <div className="remote-command-card" key={`${index}-${client.hospital_name}`}>
-                      <strong>{client.hospital_name}</strong>
-                      <pre>{remoteClientCommands[index]}</pre>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
           </div>
 
           <div id="live-run" className="card timeline-card">
@@ -598,6 +523,8 @@ function App() {
             </div>
             <div className="metric-pair-grid">
               <div><span>Strategy</span><strong>FedAvg</strong></div>
+              <div><span>Dataset case</span><strong>{globalSummary.metadata.dataset_case || displayedRun.dataset_manifest?.dataset_case || config.dataset_case}</strong></div>
+              <div><span>Clients</span><strong>{globalSummary.metadata.client_count || displayedRun.dataset_manifest?.client_count || config.client_count}</strong></div>
               <div><span>Rounds</span><strong>{globalSummary.metadata.num_rounds || "--"}</strong></div>
               <div><span>Final accuracy</span><strong>{formatMetric(globalSummary.finalEvaluate?.accuracy)}</strong></div>
               <div><span>Final loss</span><strong>{formatMetric(globalSummary.finalEvaluate?.loss)}</strong></div>
@@ -769,6 +696,8 @@ function App() {
               <thead>
                 <tr>
                   <th>Run</th>
+                  <th>Case</th>
+                  <th>Clients</th>
                   <th>Rounds</th>
                   <th>Accuracy</th>
                   <th>Loss</th>
@@ -778,6 +707,8 @@ function App() {
                 {dashboard.comparisons.map((row) => (
                   <tr key={row.run_name}>
                     <td>{row.run_name}</td>
+                    <td>{row.dataset_case || "--"}</td>
+                    <td>{row.client_count || "--"}</td>
                     <td>{row.num_rounds}</td>
                     <td>{formatMetric(row.final_eval_accuracy)}</td>
                     <td>{formatMetric(row.final_eval_loss)}</td>
@@ -839,6 +770,7 @@ function App() {
               >
                 <strong>{run.run_name}</strong>
                 <span>FedAvg</span>
+                <span>{run.dataset_case || "manual"} · {run.client_count || "--"} client(s)</span>
                 <span>Accuracy {formatMetric(run.final_accuracy)}</span>
                 <span>Rounds {run.num_rounds}</span>
               </button>

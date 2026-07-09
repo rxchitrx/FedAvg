@@ -36,6 +36,8 @@ def collect_run_summaries() -> List[Dict[str, object]]:
             {
                 "run_name": metadata.get("run_name", run_dir.name),
                 "aggregation_strategy": metadata.get("aggregation_strategy"),
+                "dataset_case": metadata.get("dataset_case"),
+                "client_count": metadata.get("client_count"),
                 "num_rounds": metadata.get("num_rounds"),
                 "final_fit_round": final_fit.get("round"),
                 "final_eval_round": final_eval.get("round"),
@@ -73,6 +75,8 @@ def print_table(rows: List[Dict[str, object]]) -> None:
     headers = [
         "run_name",
         "aggregation_strategy",
+        "dataset_case",
+        "client_count",
         "num_rounds",
         "final_eval_accuracy",
         "final_eval_loss",

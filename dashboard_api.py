@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -24,6 +25,12 @@ from compare_runs import collect_run_summaries, write_outputs
 ROOT_DIR = Path(__file__).resolve().parent
 ARTIFACT_ROOT = ROOT_DIR / "artifacts"
 FRONTEND_DIST = ROOT_DIR / "dashboard-ui" / "dist"
+BASE_DATASET_FILES = [ROOT_DIR / "hospital_A_data.npz", ROOT_DIR / "hospital_B_data.npz"]
+CASE_DESCRIPTIONS = {
+    "different": "Non-IID shards: each client receives a different label/appearance-skewed fragment.",
+    "same": "Identical shards: every client receives the exact same local dataset copy.",
+    "similar": "Similar fragments: clients receive different stratified fragments from the same combined dataset.",
+}
 
 
 def parse_csv(path: Path) -> list[dict[str, Any]]:
@@ -63,23 +70,125 @@ def should_keep_log_line(line: str) -> bool:
     return not any(fragment in line for fragment in noisy_fragments)
 
 
-class ClientConfig(BaseModel):
-    hospital_name: str = Field(min_length=1)
-    data_file: str = Field(min_length=1)
-    enabled: bool = True
-
-
 class RunConfig(BaseModel):
     run_name: str = Field(min_length=1)
-    server_address: str = "0.0.0.0:8080"
-    client_connect_address: str = "127.0.0.1:8080"
-    launch_local_clients: bool = True
+    server_address: str = "127.0.0.1:8080"
+    dataset_case: str = "similar"
+    client_count: int = Field(default=2, ge=1, le=5)
     num_rounds: int = 5
     local_epochs: int = 2
     batch_size: int = 32
     learning_rate: float = 0.01
     momentum: float = 0.9
-    clients: list[ClientConfig]
+
+
+def load_base_dataset() -> dict[str, np.ndarray]:
+    arrays: dict[str, list[np.ndarray]] = {"x_train": [], "y_train": [], "x_test": [], "y_test": []}
+    missing_files = [str(path.name) for path in BASE_DATASET_FILES if not path.exists()]
+    if missing_files:
+        raise HTTPException(status_code=400, detail=f"Missing base dataset files: {', '.join(missing_files)}")
+
+    for path in BASE_DATASET_FILES:
+        data = np.load(path)
+        for key in arrays:
+            arrays[key].append(data[key])
+
+    return {key: np.concatenate(parts, axis=0) for key, parts in arrays.items()}
+
+
+def save_dataset_shard(path: Path, payload: dict[str, np.ndarray]) -> dict[str, Any]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        path,
+        x_train=payload["x_train"],
+        y_train=payload["y_train"],
+        x_test=payload["x_test"],
+        y_test=payload["y_test"],
+    )
+    y_train = payload["y_train"].reshape(-1)
+    y_test = payload["y_test"].reshape(-1)
+    train_labels, train_counts = np.unique(y_train, return_counts=True)
+    test_labels, test_counts = np.unique(y_test, return_counts=True)
+    return {
+        "data_file": str(path),
+        "train_samples": int(len(y_train)),
+        "test_samples": int(len(y_test)),
+        "train_label_counts": {str(int(label)): int(count) for label, count in zip(train_labels, train_counts)},
+        "test_label_counts": {str(int(label)): int(count) for label, count in zip(test_labels, test_counts)},
+    }
+
+
+def stratified_index_splits(labels: np.ndarray, client_count: int, seed: int) -> list[np.ndarray]:
+    rng = np.random.default_rng(seed)
+    splits = [[] for _ in range(client_count)]
+    for label in np.unique(labels):
+        label_indices = np.where(labels == label)[0]
+        rng.shuffle(label_indices)
+        for client_index, chunk in enumerate(np.array_split(label_indices, client_count)):
+            splits[client_index].extend(chunk.tolist())
+    return [np.array(sorted(split), dtype=int) for split in splits]
+
+
+def different_index_splits(images: np.ndarray, labels: np.ndarray, client_count: int) -> list[np.ndarray]:
+    brightness = images.reshape(images.shape[0], -1).mean(axis=1)
+    order = np.lexsort((brightness, labels.reshape(-1)))
+    return [np.array(chunk, dtype=int) for chunk in np.array_split(order, client_count)]
+
+
+def make_payload(dataset: dict[str, np.ndarray], train_indices: np.ndarray, test_indices: np.ndarray) -> dict[str, np.ndarray]:
+    return {
+        "x_train": dataset["x_train"][train_indices],
+        "y_train": dataset["y_train"][train_indices],
+        "x_test": dataset["x_test"][test_indices],
+        "y_test": dataset["y_test"][test_indices],
+    }
+
+
+def prepare_showcase_datasets(config: RunConfig, run_dir: Path) -> list[dict[str, Any]]:
+    dataset_case = config.dataset_case.strip().lower()
+    if dataset_case not in CASE_DESCRIPTIONS:
+        raise HTTPException(status_code=400, detail="Dataset case must be one of: different, same, similar.")
+
+    dataset = load_base_dataset()
+    y_train = dataset["y_train"].reshape(-1)
+    y_test = dataset["y_test"].reshape(-1)
+    dataset_dir = run_dir / "datasets"
+    clients: list[dict[str, Any]] = []
+
+    if dataset_case == "same":
+        train_splits = [np.arange(len(y_train), dtype=int) for _ in range(config.client_count)]
+        test_splits = [np.arange(len(y_test), dtype=int) for _ in range(config.client_count)]
+    elif dataset_case == "similar":
+        train_splits = stratified_index_splits(y_train, config.client_count, seed=7)
+        test_splits = stratified_index_splits(y_test, config.client_count, seed=11)
+    else:
+        train_splits = different_index_splits(dataset["x_train"], y_train, config.client_count)
+        test_splits = different_index_splits(dataset["x_test"], y_test, config.client_count)
+
+    for index in range(config.client_count):
+        hospital_name = f"Hospital_{chr(65 + index)}"
+        shard_path = dataset_dir / f"{dataset_case}_{hospital_name}.npz"
+        stats = save_dataset_shard(shard_path, make_payload(dataset, train_splits[index], test_splits[index]))
+        clients.append(
+            {
+                "hospital_name": hospital_name,
+                "data_file": str(shard_path),
+                "enabled": True,
+                **stats,
+            }
+        )
+
+    manifest = {
+        "dataset_case": dataset_case,
+        "description": CASE_DESCRIPTIONS[dataset_case],
+        "client_count": config.client_count,
+        "source_files": [str(path.name) for path in BASE_DATASET_FILES],
+        "clients": clients,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with (dataset_dir / "manifest.json").open("w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2)
+    return clients
 
 
 class ManagedProcess:
@@ -153,21 +262,11 @@ class RunController:
         if any(proc.status()["state"] == "running" for proc in self.processes.values()):
             raise HTTPException(status_code=400, detail="A run is already active. Stop it before starting another.")
 
-        enabled_clients = [client for client in config.clients if client.enabled]
-        if len(enabled_clients) < 2:
-            raise HTTPException(status_code=400, detail="At least two enabled clients are required.")
-        enabled_client_names = [client.hospital_name.strip() for client in enabled_clients]
-        if any(not client_name for client_name in enabled_client_names):
-            raise HTTPException(status_code=400, detail="Enabled clients must have non-empty hospital names.")
-        if any(not client.data_file.strip() for client in enabled_clients):
-            raise HTTPException(status_code=400, detail="Enabled clients must have non-empty dataset shard paths.")
-        if len(enabled_client_names) != len(set(enabled_client_names)):
-            raise HTTPException(status_code=400, detail="Enabled clients must have unique hospital names.")
-
         self.current_run_name = config.run_name
         run_dir = ARTIFACT_ROOT / config.run_name
         if run_dir.exists():
             shutil.rmtree(run_dir)
+        enabled_clients = prepare_showcase_datasets(config, run_dir)
 
         common_env = os.environ.copy()
         common_env.update(
@@ -178,6 +277,8 @@ class RunController:
                 "RUN_NAME": config.run_name,
                 "ARTIFACT_ROOT": str(ARTIFACT_ROOT),
                 "MIN_AVAILABLE_CLIENTS": str(len(enabled_clients)),
+                "DATASET_CASE": config.dataset_case,
+                "CLIENT_COUNT": str(config.client_count),
             }
         )
 
@@ -185,16 +286,12 @@ class RunController:
         server.start()
         self.processes = {"server": server}
 
-        if not config.launch_local_clients:
-            return
-
         time.sleep(1.0)
 
         for idx, client in enumerate(enabled_clients):
             client_env = common_env | {
-                "SERVER_ADDRESS": config.client_connect_address,
-                "HOSPITAL_NAME": client.hospital_name,
-                "DATA_FILE": client.data_file,
+                "HOSPITAL_NAME": client["hospital_name"],
+                "DATA_FILE": client["data_file"],
                 "BATCH_SIZE": str(config.batch_size),
                 "LEARNING_RATE": str(config.learning_rate),
                 "MOMENTUM": str(config.momentum),
@@ -219,6 +316,7 @@ def collect_run_details(run_name: str) -> dict[str, Any]:
     fit_rows = parse_csv(server_dir / "fit_rounds.csv")
     eval_rows = parse_csv(server_dir / "evaluation_rounds.csv")
     server_client_rows = parse_csv(server_dir / "client_rounds.csv")
+    dataset_manifest = read_json(run_dir / "datasets" / "manifest.json")
     client_root = run_dir / "clients"
     client_summaries: list[dict[str, Any]] = []
     if client_root.exists():
@@ -266,6 +364,7 @@ def collect_run_details(run_name: str) -> dict[str, Any]:
         "server_summary": read_json(server_dir / "summary.json"),
         "fit_rounds": fit_rows,
         "evaluation_rounds": eval_rows,
+        "dataset_manifest": dataset_manifest,
         "clients": client_summaries,
     }
 
@@ -280,11 +379,14 @@ def collect_available_runs() -> list[dict[str, Any]]:
             continue
         metadata = summary.get("metadata", {})
         final_eval = summary.get("final_evaluate") or {}
+        dataset_manifest = read_json(run_dir / "datasets" / "manifest.json")
         runs.append(
             {
                 "run_name": run_dir.name,
                 "aggregation_strategy": metadata.get("aggregation_strategy"),
                 "num_rounds": metadata.get("num_rounds"),
+                "dataset_case": metadata.get("dataset_case") or dataset_manifest.get("dataset_case"),
+                "client_count": metadata.get("client_count") or dataset_manifest.get("client_count"),
                 "final_accuracy": final_eval.get("accuracy"),
                 "final_recall": final_eval.get("recall"),
                 "final_f1_score": final_eval.get("f1_score"),

@@ -5,8 +5,9 @@ FedAvg is a simple federated learning demo for binary pneumonia detection. One F
 This version intentionally keeps the architecture focused:
 
 - standard FedAvg only
-- clients can connect to the server using an IP address and port
-- the dashboard only visualizes this basic FedAvg workflow
+- server and clients run locally from the dashboard on one laptop
+- dashboard supports 1 to 5 clients
+- dashboard can generate three dataset-case demos: different, same, and similar fragments
 
 ## Project Layout
 
@@ -81,9 +82,9 @@ cd ..
 
 ## Run From Terminal
 
-### 1. Start the server
+The dashboard is the recommended way to run the final demo because it generates the selected dataset case automatically. Terminal mode is still available for quick manual testing with existing `.npz` files.
 
-For local-only testing:
+### 1. Start the server
 
 ```bash
 source .venv/bin/activate
@@ -93,19 +94,6 @@ export MIN_AVAILABLE_CLIENTS=2
 export LOCAL_EPOCHS=2
 export RUN_NAME="fedavg_demo"
 python server.py
-```
-
-For other laptops/devices to connect, bind to all network interfaces:
-
-```bash
-export SERVER_ADDRESS="0.0.0.0:8080"
-python server.py
-```
-
-Other clients should connect using your machine's reachable IP, for example:
-
-```bash
-export SERVER_ADDRESS="192.168.1.24:8080"
 ```
 
 ### 2. Start Hospital A client
@@ -149,8 +137,10 @@ http://127.0.0.1:8000
 
 The dashboard shows:
 
-- server address and run configuration
-- enabled clients and their dataset shards
+- local server address and run configuration
+- selected dataset case
+- selected client count from 1 to 5
+- generated client dataset shards
 - live process status
 - local client training metrics
 - number of tensors/scalars sent by each client
@@ -158,122 +148,27 @@ The dashboard shows:
 - global model accuracy/loss by round
 - a presentable log explaining what happened in the run
 
-## Multi-Laptop Demo
+## Dashboard Showcase Cases
 
-Use this mode when one laptop is the central server and other laptops act as hospital clients.
+The dashboard generates per-run dataset shards under `artifacts/<RUN_NAME>/datasets/` from the available base files.
 
-### 1. Put every laptop on the same network
+| Case | What It Shows | How Shards Are Generated |
+|---|---|---|
+| `Different datasets` | FedAvg under strongly non-IID clients | clients receive different label/appearance-skewed fragments |
+| `Same dataset` | FedAvg when every client has identical data | every client receives the exact same combined dataset copy |
+| `Similar fragments` | FedAvg under normal IID-like fragments | clients receive different stratified fragments with similar label ratios |
 
-Use the same Wi-Fi or the same mobile hotspot. Find the server laptop IP:
-
-```bash
-ipconfig getifaddr en0
-```
-
-If that prints nothing, try:
-
-```bash
-ipconfig getifaddr en1
-```
-
-In the examples below, replace `192.168.1.24` with the real server laptop IP.
-
-### 2. Start the dashboard on the server laptop
-
-```bash
-source .venv/bin/activate
-uvicorn dashboard_api:app --host 0.0.0.0 --port 8000
-```
-
-Open the dashboard on the server laptop:
-
-```text
-http://127.0.0.1:8000
-```
-
-Other laptops can also view it at:
-
-```text
-http://192.168.1.24:8000
-```
-
-### 3. Configure the run in the dashboard
-
-Set:
-
-- `Server bind address`: `0.0.0.0:8080`
-- `Client connection address`: `192.168.1.24:8080`
-- uncheck `Launch clients on this laptop automatically`
-- keep `Hospital_A` and `Hospital_B` enabled, or enable only the clients that will actually connect
-- use `Add client` for extra laptops such as `Hospital_C`, `Hospital_D`, and point each one at its own dataset shard
-
-Click `Start FedAvg run`. The server laptop will start the Flower server and wait for the remote clients.
-
-### 4. Prepare each client laptop
-
-On each client laptop:
-
-```bash
-git clone https://github.com/rxchitrx/FedAvg.git
-cd FedAvg
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Make sure the correct dataset shard is present on that laptop:
-
-- Hospital A laptop needs `hospital_A_data.npz`
-- Hospital B laptop needs `hospital_B_data.npz`
-
-### 5. Start Hospital A from a client laptop
-
-```bash
-source .venv/bin/activate
-export HOSPITAL_NAME="Hospital_A"
-export DATA_FILE="hospital_A_data.npz"
-export SERVER_ADDRESS="192.168.1.24:8080"
-export RUN_NAME="fedavg_demo"
-export LOCAL_EPOCHS=2
-export BATCH_SIZE=32
-export LEARNING_RATE=0.01
-export MOMENTUM=0.9
-python client.py
-```
-
-### 6. Start Hospital B from another client laptop
-
-```bash
-source .venv/bin/activate
-export HOSPITAL_NAME="Hospital_B"
-export DATA_FILE="hospital_B_data.npz"
-export SERVER_ADDRESS="192.168.1.24:8080"
-export RUN_NAME="fedavg_demo"
-export LOCAL_EPOCHS=2
-export BATCH_SIZE=32
-export LEARNING_RATE=0.01
-export MOMENTUM=0.9
-python client.py
-```
-
-The dashboard also prints these commands for the enabled clients when remote-client mode is selected.
-
-For more than two laptops, click `Add client` in the dashboard, give each client a unique hospital name, and make sure each client laptop runs the generated command with its matching `HOSPITAL_NAME` and `DATA_FILE`.
-
-If a client cannot connect, check that:
-
-- all laptops are on the same network
-- the server laptop firewall allows incoming connections
-- port `8080` is not already in use
-- each client uses the server laptop IP, not `127.0.0.1`
+The `Number of clients` dropdown supports `1` through `5`. With one client, the run acts as a local-training baseline through the same server/client protocol.
 
 ## Configuration
 
 | Variable | Description | Default |
 |---|---|---|
-| `SERVER_ADDRESS` | Server bind/connect address | `127.0.0.1:8080` for client, `0.0.0.0:8080` for server |
+| `SERVER_ADDRESS` | Local Flower server address | `127.0.0.1:8080` |
 | `NUM_ROUNDS` | Federated communication rounds | `5` |
 | `MIN_AVAILABLE_CLIENTS` | Required clients before server starts a round | `2` |
+| `DATASET_CASE` | Dashboard-generated dataset case label | `manual` |
+| `CLIENT_COUNT` | Number of configured local clients | `MIN_AVAILABLE_CLIENTS` |
 | `LOCAL_EPOCHS` | Local epochs per round | `2` |
 | `RUN_NAME` | Artifact folder name | `default_run` |
 | `ARTIFACT_ROOT` | Root output directory | `artifacts` |
@@ -293,6 +188,8 @@ artifacts/<RUN_NAME>/
 
 Server artifacts:
 
+- `datasets/manifest.json`
+- `datasets/<case>_<HOSPITAL_NAME>.npz`
 - `server/fit_rounds.csv`
 - `server/evaluation_rounds.csv`
 - `server/client_rounds.csv`

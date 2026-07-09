@@ -9,13 +9,15 @@ import flwr as fl
 from flwr.common import FitRes, MetricsAggregationFn
 
 
-SERVER_ADDRESS = os.getenv("SERVER_ADDRESS", "0.0.0.0:8080")
+SERVER_ADDRESS = os.getenv("SERVER_ADDRESS", "127.0.0.1:8080")
 NUM_ROUNDS = int(os.getenv("NUM_ROUNDS", "5"))
 MIN_AVAILABLE_CLIENTS = int(os.getenv("MIN_AVAILABLE_CLIENTS", "2"))
 LOCAL_EPOCHS = int(os.getenv("LOCAL_EPOCHS", "2"))
 RUN_NAME = os.getenv("RUN_NAME", "default_run")
 ARTIFACT_ROOT = Path(os.getenv("ARTIFACT_ROOT", "artifacts"))
 SERVER_RUN_DIR = ARTIFACT_ROOT / RUN_NAME / "server"
+DATASET_CASE = os.getenv("DATASET_CASE", "manual")
+CLIENT_COUNT = int(os.getenv("CLIENT_COUNT", str(MIN_AVAILABLE_CLIENTS)))
 
 
 def ensure_directory(path: Path) -> None:
@@ -85,6 +87,8 @@ class ServerArtifactLogger:
             "min_available_clients": MIN_AVAILABLE_CLIENTS,
             "local_epochs": LOCAL_EPOCHS,
             "aggregation_strategy": "fedavg",
+            "dataset_case": DATASET_CASE,
+            "client_count": CLIENT_COUNT,
             "started_at": datetime.now(timezone.utc).isoformat(),
         }
         self.flush()
