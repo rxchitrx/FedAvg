@@ -15,8 +15,8 @@ const defaultConfig = {
   server_address: "127.0.0.1:8080",
   dataset_case: "similar",
   client_count: 2,
-  num_rounds: 5,
-  local_epochs: 2,
+  num_rounds: 8,
+  local_epochs: 3,
   batch_size: 32,
   learning_rate: 0.01,
   momentum: 0.9,
@@ -138,46 +138,37 @@ function App() {
   }, [displayedRun]);
 
   const chartData = useMemo(() => {
-    const fitByRound = new Map();
-    const evalByRound = new Map();
-    (displayedRun.fit_rounds || []).forEach((row) => {
-      const round = toNumber(row.round);
-      if (round !== null) fitByRound.set(round, row);
-    });
-    (displayedRun.evaluation_rounds || []).forEach((row) => {
-      const round = toNumber(row.round);
-      if (round !== null) evalByRound.set(round, row);
-    });
-
-    const rounds = Array.from(new Set([...fitByRound.keys(), ...evalByRound.keys()])).sort((a, b) => a - b);
-    return rounds.map((round) => ({
-      round,
-      train_accuracy: toNumber(fitByRound.get(round)?.train_accuracy),
-      global_accuracy: toNumber(evalByRound.get(round)?.accuracy),
-    }));
+    return (displayedRun.evaluation_rounds || [])
+      .map((row) => ({
+        round: toNumber(row.round),
+        global_accuracy: toNumber(row.accuracy),
+        global_recall: toNumber(row.recall),
+        global_f1_score: toNumber(row.f1_score),
+        global_specificity: toNumber(row.specificity),
+      }))
+      .filter((row) => row.round !== null)
+      .sort((a, b) => a.round - b.round);
   }, [displayedRun]);
 
   const clientChartSections = useMemo(() => {
     return clientCards.map((client) => {
       const fitByRound = new Map();
-      const evalByRound = new Map();
       (client.round_metrics?.round_history || []).forEach((row) => {
         const round = toNumber(row.round);
         if (round === null) return;
         if (row.phase === "fit") fitByRound.set(round, row);
-        if (row.phase === "evaluate") evalByRound.set(round, row);
       });
 
-      const rounds = Array.from(new Set([...fitByRound.keys(), ...evalByRound.keys()])).sort((a, b) => a - b);
+      const rounds = Array.from(fitByRound.keys()).sort((a, b) => a - b);
       return {
         name: client.name,
         dataFile: formatDatasetName(client.summary?.metadata?.data_file),
         data: rounds.map((round) => ({
           round,
           local_train_accuracy: toNumber(fitByRound.get(round)?.train_accuracy),
-          global_test_accuracy: toNumber(evalByRound.get(round)?.accuracy),
-          local_train_loss: toNumber(fitByRound.get(round)?.train_loss),
-          global_test_loss: toNumber(evalByRound.get(round)?.loss),
+          local_train_recall: toNumber(fitByRound.get(round)?.train_recall),
+          local_train_f1_score: toNumber(fitByRound.get(round)?.train_f1_score),
+          local_train_specificity: toNumber(fitByRound.get(round)?.train_specificity),
         })),
       };
     });
@@ -188,7 +179,9 @@ function App() {
       .map((row) => ({
         round: toNumber(row.round),
         global_accuracy: toNumber(row.accuracy),
-        global_loss: toNumber(row.loss),
+        global_recall: toNumber(row.recall),
+        global_f1_score: toNumber(row.f1_score),
+        global_specificity: toNumber(row.specificity),
       }))
       .filter((row) => row.round !== null)
       .sort((a, b) => a.round - b.round);
@@ -398,7 +391,7 @@ function App() {
             <div className="section-head">
               <div>
                 <span className="eyebrow">Round metrics</span>
-                <h3>FedAvg accuracy by round</h3>
+                <h3>Global model metrics by round</h3>
               </div>
               <select value={selectedRun} onChange={(event) => setSelectedRun(event.target.value)}>
                 <option value="">Current run</option>
@@ -418,8 +411,10 @@ function App() {
                     <YAxis stroke="#5f7484" domain={[0, 1]} />
                     <Tooltip />
                     <Legend />
-                    <Line type="monotone" dataKey="train_accuracy" stroke="#0d9488" strokeWidth={3} name="Aggregated train accuracy" dot={{ r: 4 }} />
-                    <Line type="monotone" dataKey="global_accuracy" stroke="#1b5e74" strokeWidth={3} name="Global test accuracy" dot={{ r: 4 }} />
+                    <Line type="monotone" dataKey="global_accuracy" stroke="#1b5e74" strokeWidth={3} name="Accuracy" dot={{ r: 4 }} />
+                    <Line type="monotone" dataKey="global_recall" stroke="#0d9488" strokeWidth={3} name="Recall" dot={{ r: 4 }} />
+                    <Line type="monotone" dataKey="global_f1_score" stroke="#c57d19" strokeWidth={3} name="F1 score" dot={{ r: 4 }} />
+                    <Line type="monotone" dataKey="global_specificity" stroke="#9f2f22" strokeWidth={3} name="Specificity" dot={{ r: 4 }} />
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
@@ -441,6 +436,9 @@ function App() {
               <div><span>Clients</span><strong>{globalSummary.metadata.client_count || displayedRun.dataset_manifest?.client_count || config.client_count}</strong></div>
               <div><span>Rounds</span><strong>{globalSummary.metadata.num_rounds || "--"}</strong></div>
               <div><span>Final accuracy</span><strong>{formatMetric(globalSummary.finalEvaluate?.accuracy)}</strong></div>
+              <div><span>Final recall</span><strong>{formatMetric(globalSummary.finalEvaluate?.recall)}</strong></div>
+              <div><span>Final F1</span><strong>{formatMetric(globalSummary.finalEvaluate?.f1_score)}</strong></div>
+              <div><span>Specificity</span><strong>{formatMetric(globalSummary.finalEvaluate?.specificity)}</strong></div>
               <div><span>Final loss</span><strong>{formatMetric(globalSummary.finalEvaluate?.loss)}</strong></div>
               <div><span>Client updates</span><strong>{formatInteger(globalSummary.finalFit?.received_client_updates)}</strong></div>
               <div><span>Server address</span><strong>{globalSummary.metadata.server_address || config.server_address}</strong></div>
@@ -452,9 +450,9 @@ function App() {
           <div className="section-title-row">
             <div>
               <span className="eyebrow">Separated model views</span>
-              <h3>Client models and global model over rounds</h3>
+              <h3>Local client models and global model over rounds</h3>
             </div>
-            <p>These charts separate local client behavior from the final global model evaluation.</p>
+            <p>Client charts show local training only. The global chart shows server-aggregated evaluation only.</p>
           </div>
 
           <div className="client-chart-grid">
@@ -482,15 +480,31 @@ function App() {
                             dataKey="local_train_accuracy"
                             stroke="#0d9488"
                             strokeWidth={3}
-                            name="Local train accuracy"
+                            name="Accuracy"
                             dot={{ r: 4 }}
                           />
                           <Line
                             type="monotone"
-                            dataKey="global_test_accuracy"
+                            dataKey="local_train_recall"
                             stroke="#1b5e74"
                             strokeWidth={3}
-                            name="Global model test accuracy on this client"
+                            name="Recall"
+                            dot={{ r: 4 }}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="local_train_f1_score"
+                            stroke="#c57d19"
+                            strokeWidth={3}
+                            name="F1 score"
+                            dot={{ r: 4 }}
+                          />
+                          <Line
+                            type="monotone"
+                            dataKey="local_train_specificity"
+                            stroke="#9f2f22"
+                            strokeWidth={3}
+                            name="Specificity"
                             dot={{ r: 4 }}
                           />
                         </LineChart>
@@ -500,7 +514,7 @@ function App() {
                     )}
                   </div>
                   <div className="chart-caption">
-                    Green is this client after local training. Blue is the server&apos;s averaged global model tested on this client.
+                    This chart shows only this client&apos;s local model after local training in each round.
                   </div>
                 </div>
               ))
@@ -521,26 +535,39 @@ function App() {
                     <LineChart data={globalChartData}>
                       <CartesianGrid stroke="#d9e3ea" strokeDasharray="4 4" />
                       <XAxis dataKey="round" stroke="#5f7484" allowDecimals={false} />
-                      <YAxis yAxisId="accuracy" stroke="#5f7484" domain={[0, 1]} />
-                      <YAxis yAxisId="loss" orientation="right" stroke="#9b6b2f" />
+                      <YAxis stroke="#5f7484" domain={[0, 1]} />
                       <Tooltip />
                       <Legend />
                       <Line
-                        yAxisId="accuracy"
                         type="monotone"
                         dataKey="global_accuracy"
                         stroke="#1b5e74"
                         strokeWidth={3}
-                        name="Global test accuracy"
+                        name="Accuracy"
                         dot={{ r: 4 }}
                       />
                       <Line
-                        yAxisId="loss"
                         type="monotone"
-                        dataKey="global_loss"
+                        dataKey="global_recall"
+                        stroke="#0d9488"
+                        strokeWidth={3}
+                        name="Recall"
+                        dot={{ r: 4 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="global_f1_score"
                         stroke="#c57d19"
                         strokeWidth={3}
-                        name="Global test loss"
+                        name="F1 score"
+                        dot={{ r: 4 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="global_specificity"
+                        stroke="#9f2f22"
+                        strokeWidth={3}
+                        name="Specificity"
                         dot={{ r: 4 }}
                       />
                     </LineChart>
@@ -572,6 +599,9 @@ function App() {
                     <h4>Local training update</h4>
                     <div className="mini-metrics">
                       <div><span>Train acc</span><strong>{formatMetric(client.latestFit?.train_accuracy)}</strong></div>
+                      <div><span>Recall</span><strong>{formatMetric(client.latestFit?.train_recall)}</strong></div>
+                      <div><span>F1 score</span><strong>{formatMetric(client.latestFit?.train_f1_score)}</strong></div>
+                      <div><span>Specificity</span><strong>{formatMetric(client.latestFit?.train_specificity)}</strong></div>
                       <div><span>Train loss</span><strong>{formatMetric(client.latestFit?.train_loss)}</strong></div>
                       <div><span>Tensors sent</span><strong>{formatInteger(client.latestFit?.tensor_count)}</strong></div>
                       <div><span>Scalars sent</span><strong>{formatInteger(client.latestFit?.scalar_count)}</strong></div>
@@ -583,6 +613,9 @@ function App() {
                     <h4>Global model evaluation</h4>
                     <div className="mini-metrics">
                       <div><span>Accuracy</span><strong>{formatMetric(client.latestEvaluate?.accuracy)}</strong></div>
+                      <div><span>Recall</span><strong>{formatMetric(client.latestEvaluate?.recall)}</strong></div>
+                      <div><span>F1 score</span><strong>{formatMetric(client.latestEvaluate?.f1_score)}</strong></div>
+                      <div><span>Specificity</span><strong>{formatMetric(client.latestEvaluate?.specificity)}</strong></div>
                       <div><span>Loss</span><strong>{formatMetric(client.latestEvaluate?.loss)}</strong></div>
                       <div><span>Data file</span><strong>{formatDatasetName(client.summary?.metadata?.data_file)}</strong></div>
                     </div>

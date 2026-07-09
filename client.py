@@ -70,18 +70,41 @@ class PneumoniaCNN(nn.Module):
         return self.classifier(self.features(x))
 
 
-def accuracy_from_logits(outputs: torch.Tensor, labels: torch.Tensor) -> Tuple[int, int]:
+def confusion_from_logits(outputs: torch.Tensor, labels: torch.Tensor) -> Dict[str, int]:
     _, predicted = torch.max(outputs.data, 1)
-    correct = int((predicted == labels).sum().item())
-    total = int(labels.size(0))
-    return correct, total
+    return {
+        "tp": int(((predicted == 1) & (labels == 1)).sum().item()),
+        "tn": int(((predicted == 0) & (labels == 0)).sum().item()),
+        "fp": int(((predicted == 1) & (labels == 0)).sum().item()),
+        "fn": int(((predicted == 0) & (labels == 1)).sum().item()),
+    }
+
+
+def metrics_from_confusion(total_loss: float, tp: int, tn: int, fp: int, fn: int) -> Dict[str, float]:
+    total = tp + tn + fp + fn
+    accuracy = (tp + tn) / total if total else 0.0
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    specificity = tn / (tn + fp) if (tn + fp) else 0.0
+    f1_score = (2 * precision * recall / (precision + recall)) if (precision + recall) else 0.0
+    return {
+        "loss": total_loss / total if total else 0.0,
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "specificity": specificity,
+        "f1_score": f1_score,
+        "tp": float(tp),
+        "tn": float(tn),
+        "fp": float(fp),
+        "fn": float(fn),
+    }
 
 
 def train_one_epoch(model: nn.Module, train_loader: DataLoader, optimizer, criterion) -> Dict[str, float]:
     model.train()
     total_loss = 0.0
-    correct = 0
-    total = 0
+    tp = tn = fp = fn = 0
     for images, labels in train_loader:
         optimizer.zero_grad()
         outputs = model(images)
@@ -89,36 +112,33 @@ def train_one_epoch(model: nn.Module, train_loader: DataLoader, optimizer, crite
         loss.backward()
         optimizer.step()
 
-        batch_correct, batch_total = accuracy_from_logits(outputs, labels)
-        correct += batch_correct
-        total += batch_total
-        total_loss += float(loss.item()) * batch_total
+        batch_confusion = confusion_from_logits(outputs, labels)
+        tp += batch_confusion["tp"]
+        tn += batch_confusion["tn"]
+        fp += batch_confusion["fp"]
+        fn += batch_confusion["fn"]
+        total_loss += float(loss.item()) * int(labels.size(0))
 
-    return {
-        "loss": total_loss / total,
-        "accuracy": correct / total,
-    }
+    return metrics_from_confusion(total_loss, tp, tn, fp, fn)
 
 
 def evaluate(model: nn.Module, data_loader: DataLoader) -> Dict[str, float]:
     criterion = nn.CrossEntropyLoss()
     model.eval()
     total_loss = 0.0
-    correct = 0
-    total = 0
+    tp = tn = fp = fn = 0
     with torch.no_grad():
         for images, labels in data_loader:
             outputs = model(images)
             loss = criterion(outputs, labels)
-            batch_correct, batch_total = accuracy_from_logits(outputs, labels)
-            correct += batch_correct
-            total += batch_total
-            total_loss += float(loss.item()) * batch_total
+            batch_confusion = confusion_from_logits(outputs, labels)
+            tp += batch_confusion["tp"]
+            tn += batch_confusion["tn"]
+            fp += batch_confusion["fp"]
+            fn += batch_confusion["fn"]
+            total_loss += float(loss.item()) * int(labels.size(0))
 
-    return {
-        "loss": total_loss / total,
-        "accuracy": correct / total,
-    }
+    return metrics_from_confusion(total_loss, tp, tn, fp, fn)
 
 
 def summarize_parameters(parameters: List[np.ndarray]) -> str:
@@ -151,6 +171,9 @@ class ClientArtifactLogger:
             "epoch": epoch_number,
             "train_loss": metrics["loss"],
             "train_accuracy": metrics["accuracy"],
+            "train_recall": metrics["recall"],
+            "train_f1_score": metrics["f1_score"],
+            "train_specificity": metrics["specificity"],
         }
         append_csv_row(self.epoch_csv_path, list(row.keys()), row)
 
@@ -208,7 +231,9 @@ class PneumoniaClient(fl.client.NumPyClient):
             self.logger.record_epoch(round_number, epoch, final_train_metrics)
             print(
                 f"[{HOSPITAL_NAME}] Round {round_number} Epoch {epoch}/{local_epochs}: "
-                f"loss={final_train_metrics['loss']:.4f}, accuracy={final_train_metrics['accuracy']:.4f}"
+                f"loss={final_train_metrics['loss']:.4f}, accuracy={final_train_metrics['accuracy']:.4f}, "
+                f"recall={final_train_metrics['recall']:.4f}, f1={final_train_metrics['f1_score']:.4f}, "
+                f"specificity={final_train_metrics['specificity']:.4f}"
             )
 
         outgoing_parameters = self.get_parameters(config={})
@@ -216,6 +241,9 @@ class PneumoniaClient(fl.client.NumPyClient):
         fit_metrics = {
             "train_loss": final_train_metrics["loss"],
             "train_accuracy": final_train_metrics["accuracy"],
+            "train_recall": final_train_metrics["recall"],
+            "train_f1_score": final_train_metrics["f1_score"],
+            "train_specificity": final_train_metrics["specificity"],
             "hospital_name": HOSPITAL_NAME,
             "data_file": DATA_FILE,
             "tensor_count": float(len(outgoing_parameters)),
@@ -229,10 +257,17 @@ class PneumoniaClient(fl.client.NumPyClient):
         print(f"[{HOSPITAL_NAME}] Round {round_number}: evaluating global model.")
         self.set_parameters(parameters)
         metrics = evaluate(self.model, self.test_loader)
-        print(f"[{HOSPITAL_NAME}] Global model test metrics: loss={metrics['loss']:.4f}, accuracy={metrics['accuracy']:.4f}")
+        print(
+            f"[{HOSPITAL_NAME}] Global model test metrics: loss={metrics['loss']:.4f}, "
+            f"accuracy={metrics['accuracy']:.4f}, recall={metrics['recall']:.4f}, "
+            f"f1={metrics['f1_score']:.4f}, specificity={metrics['specificity']:.4f}"
+        )
         self.logger.record_evaluate(round_number, metrics)
         return float(metrics["loss"]), len(self.test_loader.dataset), {
             "accuracy": float(metrics["accuracy"]),
+            "recall": float(metrics["recall"]),
+            "f1_score": float(metrics["f1_score"]),
+            "specificity": float(metrics["specificity"]),
             "hospital_name": HOSPITAL_NAME,
             "data_file": DATA_FILE,
         }

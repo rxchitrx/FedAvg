@@ -138,8 +138,8 @@ class RunConfig(BaseModel):
     server_address: str = "127.0.0.1:8080"
     dataset_case: str = "similar"
     client_count: int = Field(default=2, ge=1, le=5)
-    num_rounds: int = 5
-    local_epochs: int = 2
+    num_rounds: int = 8
+    local_epochs: int = 3
     batch_size: int = 32
     learning_rate: float = 0.01
     momentum: float = 0.9

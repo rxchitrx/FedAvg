@@ -44,8 +44,12 @@ def weighted_average(metrics: List[Tuple[int, Dict[str, float]]]) -> Dict[str, f
     if not metrics:
         return {}
     total_examples = sum(num_examples for num_examples, _ in metrics)
-    weighted_accuracy = sum(num_examples * float(metric_dict["accuracy"]) for num_examples, metric_dict in metrics)
-    return {"accuracy": weighted_accuracy / total_examples}
+    metric_names = ["accuracy", "recall", "f1_score", "specificity"]
+    return {
+        metric_name: sum(num_examples * float(metric_dict.get(metric_name, 0.0)) for num_examples, metric_dict in metrics)
+        / total_examples
+        for metric_name in metric_names
+    }
 
 
 def fit_config(server_round: int) -> Dict[str, int]:
@@ -73,10 +77,16 @@ class ServerArtifactLogger:
             "num_examples",
             "train_loss",
             "train_accuracy",
+            "train_recall",
+            "train_f1_score",
+            "train_specificity",
             "tensor_count",
             "scalar_count",
             "loss",
             "accuracy",
+            "recall",
+            "f1_score",
+            "specificity",
         ]
         self.summary_json_path = SERVER_RUN_DIR / "summary.json"
         self.history: List[Dict[str, object]] = []
@@ -174,10 +184,25 @@ class LoggingFedAvg(fl.server.strategy.FedAvg):
                 fit_res.num_examples * float(fit_res.metrics.get("train_accuracy", 0.0))
                 for _, fit_res in results
             ) / total_examples
+            weighted_train_recall = sum(
+                fit_res.num_examples * float(fit_res.metrics.get("train_recall", 0.0))
+                for _, fit_res in results
+            ) / total_examples
+            weighted_train_f1_score = sum(
+                fit_res.num_examples * float(fit_res.metrics.get("train_f1_score", 0.0))
+                for _, fit_res in results
+            ) / total_examples
+            weighted_train_specificity = sum(
+                fit_res.num_examples * float(fit_res.metrics.get("train_specificity", 0.0))
+                for _, fit_res in results
+            ) / total_examples
             SERVER_ARTIFACT_LOGGER.record_fit_round(
                 server_round,
                 {
                     "train_accuracy": weighted_train_accuracy,
+                    "train_recall": weighted_train_recall,
+                    "train_f1_score": weighted_train_f1_score,
+                    "train_specificity": weighted_train_specificity,
                     "received_client_updates": len(results),
                     "aggregation": "fedavg",
                 },
@@ -209,7 +234,14 @@ class LoggingFedAvg(fl.server.strategy.FedAvg):
                 len(results),
             )
             accuracy = float((aggregated_metrics or {}).get("accuracy", 0.0))
-            print(f"[SERVER] Round {server_round}: global evaluation accuracy={accuracy:.4f}, loss={aggregated_loss:.4f}")
+            recall = float((aggregated_metrics or {}).get("recall", 0.0))
+            f1_score = float((aggregated_metrics or {}).get("f1_score", 0.0))
+            specificity = float((aggregated_metrics or {}).get("specificity", 0.0))
+            print(
+                f"[SERVER] Round {server_round}: global evaluation accuracy={accuracy:.4f}, "
+                f"recall={recall:.4f}, f1={f1_score:.4f}, specificity={specificity:.4f}, "
+                f"loss={aggregated_loss:.4f}"
+            )
         return aggregated_loss, aggregated_metrics
 
 
