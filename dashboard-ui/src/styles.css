@@ -230,6 +230,10 @@ button:disabled {
   font-size: 0.86rem;
 }
 
+.global-only-chart {
+  grid-column: 1 / -1;
+}
+
 .global-summary-card {
   align-self: stretch;
   grid-column: 1 / -1;
